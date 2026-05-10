@@ -1,0 +1,17 @@
+{
+  "name": "lumen",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "install:all": "cd web && npm install && cd ../server && npm install",
+    "extract": ".venv/bin/python tools/python/extract.py",
+    "inspect": ".venv/bin/python tools/python/inspect_disc.py",
+    "dev:server": "cd server && npm run dev",
+    "dev:web": "cd web && npm run dev",
+    "dev": "concurrently -n server,web -c yellow,cyan \"npm:dev:server\" \"npm:dev:web\"",
+    "typecheck": "cd web && npx tsc --noEmit && cd ../server && npx tsc --noEmit"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}

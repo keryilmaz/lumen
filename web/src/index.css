@@ -1,0 +1,152 @@
+@import "tailwindcss";
+
+/* Design tokens — sage-tinted near-black with cream highlights.
+ * Inspired by editorial dashboard aesthetics: monochromatic palette,
+ * large light-weight display numbers, pill-outlined actions, subtle
+ * card separation via background shifts (not borders). */
+:root {
+  /* Outer page chrome (the sage-mint that surrounds the dashboard) */
+  --bg-page: #d8ded6;
+
+  /* Working surfaces — near-black with consistent green tint (per Codex review) */
+  --bg-base: #101211;        /* primary canvas / app shell */
+  --bg-1: #151715;           /* card / chrome surface */
+  --bg-2: #1b1f1b;           /* elevated surface */
+  --bg-3: #252a24;           /* input fields, hover */
+  --bg-4: #343a33;           /* active pills */
+
+  /* Cream highlight surface — for primary CTAs and "featured" cards */
+  --highlight: #dfe8d9;
+  --highlight-soft: #e8eee3;
+  --highlight-ink: #101211;
+  --highlight-mute: #5d6559;
+
+  /* Text on dark surfaces */
+  --text-1: #f0f1e9;         /* primary */
+  --text-2: #b9beb3;         /* secondary */
+  --text-3: #868c82;         /* tertiary / muted */
+  --text-4: #5e665d;         /* very faint */
+
+  /* Functional colors — desaturated to match the editorial palette */
+  --warn: #d6c47a;           /* gentle amber for disclaimers */
+  --warn-soft: rgba(214, 196, 122, 0.10);
+  --notable: #d59191;        /* muted rose for high-priority findings */
+  --worth: #d6c47a;          /* same as warn */
+  --physiologic: #898b83;    /* muted gray */
+
+  /* Stroke — barely-there separators */
+  --stroke: rgba(255, 255, 255, 0.06);
+  --stroke-strong: rgba(255, 255, 255, 0.12);
+
+  /* Typography rhythm */
+  --display-weight: 200;
+  --display-tracking: -0.02em;
+}
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg-base);
+  color: var(--text-1);
+}
+
+body {
+  margin: 0;
+  font-family:
+    "Inter",
+    "InterVariable",
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Text",
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  font-feature-settings: "cv11" 1, "ss01" 1, "tnum" 1;
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+}
+
+/* Display number pattern: huge, light, tightly tracked.
+ * Used for image counts, percentages, slice indices in headers. */
+.display-num {
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-tracking);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* Outline pill button — dark on cream, or light on dark */
+.pill-outline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid currentColor;
+  color: var(--text-2);
+  background: transparent;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.pill-outline:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-1);
+}
+.pill-outline.on-cream {
+  color: var(--highlight-ink);
+  border-color: rgba(20, 23, 26, 0.4);
+}
+.pill-outline.on-cream:hover {
+  background: rgba(20, 23, 26, 0.06);
+}
+
+/* Card — generous padding, soft rounding, subtle bg shift (no border) */
+.card {
+  background: var(--bg-1);
+  border-radius: 18px;
+  padding: 18px 20px;
+}
+.card-elevated {
+  background: var(--bg-2);
+  border-radius: 18px;
+  padding: 18px 20px;
+}
+.card-cream {
+  background: var(--highlight);
+  color: var(--highlight-ink);
+  border-radius: 18px;
+  padding: 18px 20px;
+}
+
+/* Custom scrollbar — restrained */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--bg-4); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover { background: #46494a; background-clip: content-box; }
+
+/* Slim slider with circular thumb (kept as-is, retuned color) */
+input[type="range"] {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 4px;
+  background: var(--bg-3);
+  border-radius: 999px;
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--text-1);
+  cursor: grab;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+input[type="range"]::-webkit-slider-thumb:active { cursor: grabbing; }

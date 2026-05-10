@@ -1,0 +1,33 @@
+# === MEDICAL DATA — NEVER COMMIT ===
+data/
+extracted/
+*.dcm
+*.DCM
+*.dicom
+phi-cache/
+*.pet
+*.scan
+
+# === Secrets ===
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*-key.json
+
+# === Python ===
+.venv/
+__pycache__/
+*.pyc
+
+# === Node ===
+node_modules/
+dist/
+build/
+.vite/
+
+# === OS ===
+.DS_Store
+Thumbs.db
+.gstack/
