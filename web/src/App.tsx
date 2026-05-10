@@ -47,6 +47,37 @@ type ServerFinding = {
   severity: "notable" | "worth-asking" | "clearly-physiologic";
 };
 
+/** Outlined pill for header actions — matches the dashboard reference's
+ *  "Change module" / "Week ↓" style. Defined at module scope so React's
+ *  static-components rule is happy. */
+function HeaderPill({
+  children,
+  onClick,
+  disabled,
+  title,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  title?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="text-[11.5px] px-3 py-1 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      style={{
+        border: "1px solid var(--stroke-strong)",
+        color: disabled ? "var(--text-4)" : "var(--text-2)",
+        background: "transparent",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 /**
  * Codex review must-fixes addressed:
  *  - Request-identity guard (requestId + seriesId snapshot at ask time);
@@ -68,7 +99,6 @@ export default function App() {
   const [history, setHistory] = useState<ChatTurn[]>([]);
   const [provider, setProvider] = useState<Provider>("claude");
   const [busy, setBusy] = useState(false);
-  const [currentSlice, setCurrentSlice] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [keysStatus, setKeysStatus] = useState<KeysStatus | null>(null);
@@ -84,7 +114,12 @@ export default function App() {
   const requestCounterRef = useRef(0);
   const activeRequestSeriesRef = useRef<string | null>(null);
   const activeIdRef = useRef<string | null>(null);
-  activeIdRef.current = activeId;
+
+  // Keep activeIdRef synced with activeId — done in an effect (not during render)
+  // so eslint react-hooks/refs is happy.
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
 
   // Stable capture-registration object so Viewer's effect doesn't re-fire each render
   const onCaptureReady = useCallback((ready: boolean) => setCaptureReady(ready), []);
@@ -110,6 +145,13 @@ export default function App() {
     gotoRef.current?.(idx);
   }, []);
 
+  const refreshKeys = useCallback(() => {
+    fetch("/api/keys/status")
+      .then((r) => r.json())
+      .then((d) => setKeysStatus(d.keys))
+      .catch(() => setKeysStatus(null));
+  }, []);
+
   useEffect(() => {
     fetch("/api/study")
       .then((r) => r.json())
@@ -123,16 +165,12 @@ export default function App() {
         setError(`Could not load study: ${e}. Start the server with: cd server && npm run dev`),
       );
     refreshKeys();
-  }, []);
+  }, [refreshKeys]);
 
-  const refreshKeys = useCallback(() => {
-    fetch("/api/keys/status")
-      .then((r) => r.json())
-      .then((d) => setKeysStatus(d.keys))
-      .catch(() => setKeysStatus(null));
-  }, []);
-
-  // Auto-pick a configured provider once keys load, if the current pick isn't configured
+  // Auto-pick a configured provider once keys load, if the current pick isn't configured.
+  // The setProvider in this effect IS intentional cascade (re-evaluates after key change);
+  // suppressing the lint rule because the alternative (derived state) doesn't apply when
+  // the user can manually override `provider`.
   useEffect(() => {
     if (!keysStatus) return;
     const currentKeyName = (Object.entries(KEY_TO_PROVIDER).find(([, p]) => p === provider)?.[0]) as ProviderKeyName | undefined;
@@ -462,34 +500,6 @@ export default function App() {
     (t) => t.role === "assistant" && (t.scanPhase?.findings?.length || (!t.scanPhase && t.content)),
   );
 
-  /** Outlined pill for header actions — matches the reference dashboard's
-   *  "Change module" / "Week ↓" / "Change" buttons. */
-  const HeaderPill = ({
-    children,
-    onClick,
-    disabled,
-    title,
-  }: {
-    children: React.ReactNode;
-    onClick: () => void;
-    disabled?: boolean;
-    title?: string;
-  }) => (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      className="text-[11.5px] px-3 py-1 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-      style={{
-        border: "1px solid var(--stroke-strong)",
-        color: disabled ? "var(--text-4)" : "var(--text-2)",
-        background: "transparent",
-      }}
-    >
-      {children}
-    </button>
-  );
-
   if (error && series.length === 0) {
     return (
       <div className="h-full flex items-center justify-center p-8">
@@ -626,7 +636,7 @@ export default function App() {
                 series={active}
                 annotations={annotations}
                 onUserAnnotation={onUserAnnotation}
-                onSliceChange={setCurrentSlice}
+                onSliceChange={() => {}}
                 capture={captureRegistration}
                 flaggedSlices={flaggedSlices}
               />
@@ -654,7 +664,7 @@ export default function App() {
                 series={active}
                 annotations={annotations}
                 onUserAnnotation={onUserAnnotation}
-                onSliceChange={setCurrentSlice}
+                onSliceChange={() => {}}
                 capture={captureRegistration}
                 flaggedSlices={flaggedSlices}
               />

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChatTurn, Finding, Provider, ScanPhase, SeriesMeta } from "./types";
-import { friendlyName } from "./friendly";
+import type { ChatTurn, Finding, Provider, SeriesMeta, ScanPhase } from "./types";
 
 type Props = {
-  series: SeriesMeta;
+  /** Kept in the contract so callers don't have to change shape if Chat ever
+   *  needs the active series again; currently unused (the active series name
+   *  is rendered in the main app header tab strip, not in Chat). */
+  series?: SeriesMeta;
   history: ChatTurn[];
   busy: boolean;
   provider: Provider;
@@ -24,11 +26,6 @@ const SEVERITY_DOT: Record<Finding["severity"], string> = {
   notable: "bg-rose-400",
   "worth-asking": "bg-amber-400",
   "clearly-physiologic": "bg-neutral-400",
-};
-const SEVERITY_BORDER: Record<Finding["severity"], string> = {
-  notable: "rgba(251,113,133,0.35)",
-  "worth-asking": "rgba(251,191,36,0.30)",
-  "clearly-physiologic": "rgba(180,180,192,0.20)",
 };
 
 const PHASE_COPY: Record<Exclude<ScanPhase, "idle" | "done">, { label: string; sub: string }> = {
@@ -65,7 +62,6 @@ const PROVIDER_TEXT: Record<Provider, string> = {
 };
 
 export function Chat({
-  series,
   history,
   busy,
   provider,

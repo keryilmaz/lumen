@@ -67,7 +67,7 @@ One-click export of all findings + your specific questions + a consolidated "que
 
 ```bash
 # 1. Clone
-git clone https://github.com/<your-username>/lumen.git
+git clone https://github.com/keryilmaz/lumen.git
 cd lumen
 
 # 2. Set up Python venv for DICOM extraction
@@ -92,9 +92,12 @@ cd ..
 #    or copy .env.example to .env and edit
 cp .env.example .env
 
-# 7. Start both servers (in two terminals, or use concurrently)
-cd server && npm run dev    # local API on :5174
-cd web    && npm run dev    # Vite dev server on :5173
+# 7. Start both servers in one command (uses concurrently)
+npm run dev    # boots Express :5174 + Vite :5173 in parallel
+
+# Or in two separate terminals if you prefer:
+#   cd server && npm run dev
+#   cd web    && npm run dev
 
 # 8. Open http://localhost:5173
 ```

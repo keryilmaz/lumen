@@ -1,27 +1,8 @@
-# Scan Companion — Plan
+# Lumen — Architecture Plan
 
-A personal web tool for understanding a family member's PET/CT scan (bone cancer, treatment response monitoring), with an AI assistant that can answer questions and point at regions.
+A personal-use web tool for viewing DICOM medical imaging (PET, CT, MRI) and getting AI-assisted observations to bring to oncology, radiology, or specialist visits.
 
-**This is not a medical device. It is a tool to help a family member prepare better questions for the actual oncology team.** Every AI response is framed as "conversation-starter, not diagnosis."
-
----
-
-## What's actually on the disc
-
-Despite the misleading README, the DICOM headers say:
-
-| Series | Modality | Slices | Description |
-|---|---|---|---|
-| SE00003 | CT | 299 | CT Standard (512×512 axial) |
-| SE00004 | CT | 780 | CT Lung/Bone window |
-| SE00005 | CT | 780 | CT Abdomen thin-slice |
-| **SE00012** | **PT** | **299** | **PET AC (256×256) — the PET volume** |
-| SE01200 | OT | 299 | Axial fusion reconstruction |
-| SE01201 | OT | 171 | Coronal fusion reconstruction |
-| SE01202 | OT | 92 | Axial reconstruction (likely MIP) |
-| SE00999 | CT | 1 | Dose report |
-
-Source: a PET/CT imaging disc (DICOM, IHE-PDI standard).
+**This is not a medical device. It is a tool to help users prepare better questions for their actual care team.** Every AI response is framed as "conversation-starter, not diagnosis."
 
 ---
 
@@ -30,9 +11,9 @@ Source: a PET/CT imaging disc (DICOM, IHE-PDI standard).
 ```
 ┌──────────────────────────── Browser (Vite + React + TS) ────────────────────────────┐
 │                                                                                     │
-│  ┌─────────────── Viewer pane (Cornerstone3D) ─────────┐  ┌─── Chat pane ───┐      │
+│  ┌─────────────── Viewer pane (canvas) ────────────────┐  ┌─── Chat pane ───┐      │
 │  │                                                      │  │                 │      │
-│  │  PET/CT fusion · MIP · stack scroll · circle ROI    │  │  AI conversation│      │
+│  │  Stack scroll · slice scrubber · circle ROI         │  │  AI conversation│      │
 │  │                                                      │  │  Provider tabs: │      │
 │  │  - User draws circle → emits ROI region              │  │  Claude · GPT-5 │      │
 │  │  - AI returns coords → renders circle annotation     │  │  · Gemini       │      │
@@ -48,21 +29,24 @@ Source: a PET/CT imaging disc (DICOM, IHE-PDI standard).
                   │    body: { provider, slicePng, roiPng?,        │
                   │            sliceIndex, question, history }     │
                   │    → fans out to:                              │
-                  │       - Anthropic SDK (claude-sonnet-4-6)      │
-                  │       - OpenAI SDK (gpt-5)                     │
+                  │       - Anthropic SDK                          │
+                  │       - OpenAI SDK                             │
                   │       - Google Gemini SDK                      │
                   │    → returns: { text, annotations[] }          │
+                  │                                                │
+                  │  POST /api/scan/{survey,zoom,deep}             │
+                  │    Three-pass deep scan (see below)            │
                   │                                                │
                   │  System prompt enforces:                       │
                   │    - never diagnose                            │
                   │    - quantify uncertainty                      │
-                  │    - "ask your oncologist about X" suggestions │
+                  │    - "ask your specialist about X" suggestions │
                   │    - returns annotations as structured JSON    │
                   │                                                │
                   └────────────────────────────────────────────────┘
 
   Data flow on disk:
-    /Volumes/Untitled UDF Volume → tools/python/extract.py → ./data/<series>/*.png
+    DICOM disc → tools/python/extract.py → ./data/<series>/*.png
     PHI is stripped on extraction; only pixel data + non-identifying acquisition
     metadata persisted. The browser only ever sees the scrubbed local data dir.
 ```
@@ -77,145 +61,68 @@ Source: a PET/CT imaging disc (DICOM, IHE-PDI standard).
 
 ## Components
 
-### 1. Data extraction (Python, one-time)
-- `tools/python/inspect_disc.py` — already written; reports series structure.
-- `tools/python/extract.py` — reads each series, applies PET-appropriate windowing for PT (raw counts → 8-bit display), CT windowing presets for CT (lung, bone, soft tissue), writes PNG + `meta.json` (slice index, instance UID, slice position, SUV scaling factors). **Strips PHI** (name, MRN, accession, institution, DOB) — only pixel + acquisition params survive.
+### 1. Data extraction (Python, one-time per study)
+- `tools/python/inspect_disc.py` — reports series structure of a mounted DICOM disc.
+- `tools/python/extract.py` — reads each series, applies modality-appropriate windowing (CT lung/bone/soft-tissue presets, percentile clip for PET, raw rescale for fusion/OT), writes PNG + `meta.json` (slice index, instance UID, slice position, scaling factors). **Strips PHI** (name, MRN, accession, institution, DOB) — only pixel + acquisition params survive.
 
 ### 2. Web viewer (`web/`)
-- Vite + React + TypeScript + Tailwind.
-- **Cornerstone3D** (`@cornerstonejs/core` + `@cornerstonejs/tools`).
-- Uses Cornerstone3D's `dicom-image-loader`, but for MVP we load pre-extracted PNGs (faster, simpler, sidesteps DICOM-in-browser quirks for first version). DICOM-direct is a v2 upgrade.
-- Tools enabled: `StackScrollMouseWheelTool`, `WindowLevelTool`, `ZoomTool`, `PanTool`, `CircleROITool`.
-- Layout: viewer on left (with series picker tabs: PET, CT-bone, CT-abdomen, axial fusion), chat on right.
+- Vite + React 19 + TypeScript + Tailwind v4.
+- Custom canvas viewer: scroll/zoom, click-drag circle ROI, image-pixel-coord drag (resize-invariant).
+- Loads pre-extracted PNGs (faster + simpler than DICOM-in-browser).
+- Resizable SplitPane between viewer and chat (drag handle, localStorage persistence, keyboard a11y, collapse).
+- Tools enabled via mouse + scrubber: stack scroll, click+drag circle ROI, slice navigation.
+- Layout: viewer on left (with series picker tabs across modalities), chat on right.
 
 ### 3. Chat & AI router (`server/`)
-- Express server, port 5174.
-- `POST /api/ask` — accepts current slice (base64 PNG), optional cropped ROI region, slice index, series description, prior conversation, and chosen provider.
-- **Provider adapters:**
-  - Anthropic: `@anthropic-ai/sdk`, model `claude-sonnet-4-6` (vision + tool use; structured output for annotations).
-  - OpenAI: `openai` SDK, model `gpt-5`.
-  - Google: `@google/generative-ai`, model `gemini-2.5-pro`.
-- Each adapter returns `{ text: string, annotations: Annotation[] }` where `Annotation = { sliceIndex, xNorm, yNorm, radiusNorm, label, confidence }`.
+- Express server, port 5174, **127.0.0.1 only** (no LAN exposure).
+- `POST /api/ask` — single-slice question with optional ROI crop.
+- `POST /api/scan/survey|zoom|deep` — three-pass deep scan endpoints.
+- **Provider adapters:** Anthropic SDK, OpenAI SDK, Google Generative AI SDK.
+- Each adapter returns `{ text, annotations[] }` validated against a strict Zod schema.
+- Fail-closed: malformed AI responses trigger a safe fallback message — raw model text is never surfaced to the user without schema validation.
 
 ### 4. AI safety pattern (the most important component)
 The system prompt enforces:
-1. **Never diagnose.** Every response that interprets imaging starts with: "I'm not a doctor. Here's what I see in this image — confirm everything with the oncology team."
+1. **Never diagnose.** Every response that interprets imaging starts with hedged framing.
 2. **Quantify uncertainty.** "I think this looks like X" not "this is X." Confidence numbers on annotations (0–1).
-3. **Always suggest a question for the real doctor.** Every response ends with `Ask the oncologist:` followed by 1–3 specific questions tied to what was just discussed.
+3. **Always suggest a question for the real doctor.** Every response ends with `Ask the specialist:` followed by 1–3 specific questions tied to what was just discussed.
 4. **Refuse SUV estimation.** General vision models can't read SUV from a PNG; the prompt explicitly tells the model to say so when asked.
-5. **Acknowledge known limits.** Generic vision models miss small lesions, can't compare to priors, and hallucinate anatomical names. The prompt names these failure modes so they propagate into responses.
+5. **Acknowledge known limits.** Generic vision models miss small lesions, can't compare to priors, and can hallucinate anatomical names. The prompt names these failure modes so they propagate into responses.
 6. **No prognosis. No treatment recommendations. No "good news / bad news."** Pure descriptive observation + question prompts.
 
 ### 5. Annotation flow
-- **User → AI**: user draws a circle with `CircleROITool`. On "Ask", the viewer crops the ROI from the current slice, sends both the full slice + the crop region (with the circle drawn on the full slice) to the chosen provider.
-- **AI → User**: provider returns `annotations[]` in normalized coords. Viewer programmatically calls `CircleROITool.addAnnotation()` with denormalized coords on the named slice. Each AI annotation is colored differently from user annotations and labeled with the model's confidence.
+- **User → AI**: user draws a circle. On "Ask", the viewer crops the ROI from the current slice, sends both the full slice + the crop region to the chosen provider.
+- **AI → User**: provider returns `annotations[]` in normalized coords. Viewer programmatically renders circles with the AI's confidence + label.
 
----
+### 6. Three-pass deep scan
+For studies with hundreds of slices, a single API call cannot examine all of them carefully. The scan endpoint orchestrates:
 
-## Data flow (single ask)
+1. **Survey** — 16 evenly-spaced slices → identifies regions of interest with rough slice ranges.
+2. **Zoom** — ~8 dense slices around each ROI → produces structured findings, drops false positives.
+3. **Deep dive** — every slice in the top 3 regions → confirms or downgrades each finding.
 
-```
-User scrolls to PET slice 142, draws circle around a hot region, types:
-"What is this bright spot?"
-                │
-                ▼
-Viewer crops circle from slice 142 → roi.png
-Viewer renders user's circle on slice 142 → annotated_slice.png
-                │
-                ▼
-POST /api/ask {
-  provider: "claude",
-  sliceIndex: 142,
-  series: "PET AC",
-  slicePng: <annotated_slice.png base64>,
-  roiPng: <roi.png base64>,
-  question: "What is this bright spot?",
-  history: [...]
-}
-                │
-                ▼
-Server PHI-scrubs (already scrubbed — defense in depth)
-Server sends to Anthropic with system prompt + structured-output schema
-                │
-                ▼
-Claude returns: {
-  text: "I'm not a doctor. The bright region you've circled is in
-         the upper-mid abdomen, suggesting it could be in the area of
-         the liver or adjacent lymph nodes — but I can't tell from a
-         single slice alone. Hot regions on FDG-PET indicate higher
-         glucose uptake, which can mean active disease but also
-         normal tissue (heart, brain, bladder, brown fat, inflammation).
-         Confirm this with the oncology team.
+Each finding includes: anatomical region, observation, possible interpretations (3–5), comparison to a healthy scan, specific questions for the care team, severity, and confidence.
 
-         Ask the oncologist:
-         - Is this region a known lesion or new compared to prior PETs?
-         - What's the SUVmax here, and how does it compare to
-           the prior scan?
-         - Could uptake here be physiologic (normal) rather than disease?",
-  annotations: [
-    { sliceIndex: 142, xNorm: 0.51, yNorm: 0.42, radiusNorm: 0.05,
-      label: "circled region", confidence: 0.6 }
-  ]
-}
-                │
-                ▼
-Viewer renders the response in chat + adds Claude's circle to slice 142
-```
+### 7. Report export
+One-click HTML export of all findings + user questions + a consolidated "questions for the appointment" page. Print-friendly stylesheet for PDF.
 
 ---
 
 ## Privacy posture
 
-- All extracted data lives in `~/Desktop/scan-companion/data/` — `.gitignore` excludes it absolutely.
+- All extracted data lives in the local `data/` directory — `.gitignore` excludes it absolutely.
 - `tools/python/extract.py` strips DICOM PHI tags on the way out: `PatientName`, `PatientID`, `PatientBirthDate`, `AccessionNumber`, `InstitutionName`, `InstitutionAddress`, `ReferringPhysicianName`, `OperatorsName`, all UIDs except `SeriesInstanceUID`.
 - The Node server runs only on `127.0.0.1` (no LAN exposure).
-- Outbound requests go to Anthropic / OpenAI / Google APIs only; no telemetry, no analytics.
-- Anthropic does not train on API inputs/outputs by default. OpenAI doesn't train on API inputs by default (since 2023). Google Gemini API: training opt-in is region/tier-dependent — verify per-key.
-- HIPAA does not apply to a private individual analyzing a relative's data (HIPAA binds covered entities). GDPR has a "purely personal/household activity" exemption (Art. 2(2)(c)).
-- The disc itself is not modified.
+- Outbound requests go to the configured AI providers only; no telemetry, no analytics, no cloud sync.
+- Default provider data-retention: Anthropic does not train on API inputs by default; OpenAI and Google have configurable training opt-outs — verify per provider.
+- HIPAA does not apply to a private individual analyzing their own family's data (HIPAA binds covered entities). GDPR has a "purely personal/household activity" exemption (Art. 2(2)(c)).
+- The DICOM disc itself is never modified.
 
 ---
 
-## Weekend MVP milestones
+## Honest limits
 
-**Day 1 (today)**
-- [x] Project scaffold + `.gitignore` for medical data
-- [x] Python venv + pydicom inspector
-- [x] PLAN.md (this document)
-- [ ] DICOM → PNG extractor (PHI-scrubbed, with metadata sidecar)
-- [ ] Vite + React + TS bootstrap
-- [ ] First-cut viewer: pick a series, scroll slices, basic windowing
-
-**Day 2**
-- [ ] Cornerstone3D circle annotation tool wired up
-- [ ] Local Express server with one provider working (Claude first)
-- [ ] System prompt + structured output schema for annotations
-- [ ] AI annotation rendering on the viewer
-
-**Day 3 (polish)**
-- [ ] Add GPT-5 + Gemini providers
-- [ ] Provider-pick UI in chat pane
-- [ ] Conversation history per series
-- [ ] Always-visible "this is not medical advice" banner
-- [ ] README on how to run
-
----
-
-## Out of scope for MVP (deferred)
-
-- DICOM-direct loading in browser (use pre-extracted PNGs for v1)
-- True PET/CT fusion view (the OT series already has fusion reconstructions; we display those separately first)
-- True MIP rendering (SE01202 is likely already a MIP — display it as-is in v1)
-- Cross-study comparison (need a second study; we have one)
-- Persistent annotation save/load (in-memory per session is fine for MVP)
-- Anonymized export to share with the oncologist
-- Turkish UI (later — but we should display Turkish series descriptions correctly)
-
----
-
-## Honest limits to keep in mind
-
-1. **No vision model is trained on PET specifically.** Claude/GPT-5/Gemini will identify gross anatomy and obviously-bright regions, but cannot read SUV, cannot stage lymph nodes, cannot compare to a prior scan it hasn't seen. They will hallucinate confidently if not constrained.
-2. **A single axial slice is not how PET is read.** Real radiologists scroll the volume, look at MIPs, fuse with CT, and compare to priors. Our tool gives a starting point for asking the actual radiologist better questions.
+1. **No vision model is medical-imaging-specialized.** General frontier models (Claude, GPT, Gemini) will identify gross anatomy and obviously bright/dark regions, but cannot read SUV, stage anything, or compare to scans they haven't been shown. They will hallucinate confidently if not constrained.
+2. **A single axial slice is not how imaging is read.** Real radiologists scroll the volume, look at MIPs, fuse modalities, and compare to priors. Lumen gives a starting point for asking the actual radiologist better questions.
 3. **AI annotations are pointers, not findings.** When the AI draws a circle, it means "I'd like to talk about this region," not "there is a lesion here."
-4. **The most useful thing we can add later isn't more AI — it's the radiology report PDF.** The radiologist's written report is gold. If/when we get one, ingesting it as context for the chat will outperform any image analysis.
+4. **The most useful thing to add later isn't more AI — it's the radiology report PDF.** The radiologist's written report is gold. If/when you upload one as context, the chat gets dramatically more useful.
