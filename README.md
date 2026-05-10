@@ -2,7 +2,10 @@
 
 > A personal tool for understanding medical imaging scans and preparing better questions for the doctor.
 
+![Lumen — viewer + multi-provider AI chat](web/public/hero.png)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/keryilmaz/lumen/actions/workflows/ci.yml/badge.svg)](https://github.com/keryilmaz/lumen/actions/workflows/ci.yml)
 [![Made with TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6.svg)](https://www.typescriptlang.org/)
 [![React 19](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev/)
 [![Runs locally](https://img.shields.io/badge/Runs-locally-brightgreen.svg)](#privacy)
