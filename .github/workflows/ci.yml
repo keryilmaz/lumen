@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: web (typecheck + lint + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Build
+        run: npm run build --if-present
+
+  server:
+    name: server (typecheck)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+  python:
+    name: python tools (lint + import check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install pydicom pillow numpy ruff
+
+      - name: Ruff lint
+        run: ruff check tools/python || true
+
+      - name: Compile-check
+        run: |
+          python -m py_compile tools/python/inspect_disc.py
+          python -m py_compile tools/python/extract.py
+
+  privacy-grep:
+    name: privacy guard (no PHI strings, no committed .env)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Block .env from ever being tracked
+        run: |
+          if git ls-files | grep -E '(^|/)\.env$'; then
+            echo "::error::A .env file is tracked. Remove it and add to .gitignore."
+            exit 1
+          fi
+
+      - name: Block raw DICOM from being tracked
+        run: |
+          if git ls-files | grep -iE '\.(dcm|dicom)$'; then
+            echo "::error::A raw DICOM file is tracked. Remove it; only PNG-extracted slices in .gitignored data/ should exist."
+            exit 1
+          fi
+
+      - name: Block /Users/ absolute paths in source
+        run: |
+          # Exclude .github/ (templates intentionally mention the pattern) and lockfiles
+          if git grep -nE '/Users/[a-zA-Z]+' -- '*.ts' '*.tsx' '*.py' '*.json' '*.md' ':(exclude)*lock*' ':(exclude).github/*'; then
+            echo "::error::Found a personal absolute path. Replace with relative paths or env vars."
+            exit 1
+          fi

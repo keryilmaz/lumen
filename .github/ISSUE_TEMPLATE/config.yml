@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/keryilmaz/lumen/discussions
+    about: For open-ended questions, ideas, or context-sharing — not bug reports.
