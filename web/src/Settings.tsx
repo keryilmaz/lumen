@@ -14,7 +14,7 @@ const FIELDS: { key: ProviderKeyName; label: string; provider: string; placehold
   },
   {
     key: "OPENAI_API_KEY",
-    label: "OpenAI (GPT-5)",
+    label: "OpenAI (GPT-5.5)",
     provider: "gpt5",
     placeholder: "sk-…",
     help: "platform.openai.com → API Keys",
@@ -119,22 +119,22 @@ export function Settings({ open, onClose, onSaved }: Props) {
 
   return (
     <div
-      className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+      className="ui-backdrop fixed inset-0 flex items-center justify-center p-4 z-50"
       onClick={onClose}
     >
       <div
-        className="bg-neutral-950 border border-neutral-800 rounded-lg max-w-xl w-full shadow-2xl"
+        className="ui-modal-panel max-w-xl w-full overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="px-5 py-3 border-b border-neutral-800 flex items-center justify-between">
-          <h2 className="text-base font-medium">API keys</h2>
-          <button onClick={onClose} className="text-neutral-500 hover:text-neutral-300 text-xl leading-none">
+        <header className="px-5 py-3 ui-divider flex items-center justify-between" style={{ borderBottomWidth: 1 }}>
+          <h2 className="ui-title">API keys</h2>
+          <button onClick={onClose} className="ui-control ui-control-icon" aria-label="Close API keys">
             ×
           </button>
         </header>
 
-        <div className="px-5 py-3 text-xs text-neutral-400 border-b border-neutral-900">
-          Keys are saved to <code className="text-neutral-300">.env</code>
+        <div className="ui-caption px-5 py-3 ui-divider" style={{ borderBottomWidth: 1 }}>
+          Keys are saved to <code style={{ color: "var(--text-2)" }}>.env</code>
           {" "}(local file, gitignored). They are sent only to each provider's API and never to anyone else.
           You only need one provider configured to use the app.
         </div>
@@ -147,17 +147,17 @@ export function Settings({ open, onClose, onSaved }: Props) {
             return (
               <div key={key} className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-neutral-200">{label}</label>
+                  <label className="ui-title">{label}</label>
                   {isConfigured && (
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-emerald-400">
+                      <span className="ui-caption" style={{ color: "var(--highlight)" }}>
                         ✓ saved (…{cur?.last4})
                       </span>
                       <button
                         type="button"
                         disabled={busy}
                         onClick={() => remove(key)}
-                        className="text-xs text-neutral-500 hover:text-red-400"
+                        className="ui-inline-action"
                       >
                         remove
                       </button>
@@ -165,7 +165,7 @@ export function Settings({ open, onClose, onSaved }: Props) {
                         <button
                           type="button"
                           onClick={() => setDrafts((d) => ({ ...d, [key]: "" }))}
-                          className="text-xs text-neutral-500 hover:text-cyan-400"
+                          className="ui-inline-action"
                         >
                           replace
                         </button>
@@ -182,12 +182,12 @@ export function Settings({ open, onClose, onSaved }: Props) {
                       placeholder={placeholder}
                       autoComplete="off"
                       spellCheck={false}
-                      className="flex-1 bg-neutral-900 border border-neutral-800 rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-cyan-700"
+                      className="ui-field flex-1 font-mono"
                     />
                     <button
                       type="button"
                       onClick={() => setReveal((r) => ({ ...r, [key]: !r[key] }))}
-                      className="px-2 text-xs text-neutral-500 hover:text-neutral-300"
+                      className="ui-control"
                       title={reveal[key] ? "hide" : "show"}
                     >
                       {reveal[key] ? "hide" : "show"}
@@ -196,29 +196,29 @@ export function Settings({ open, onClose, onSaved }: Props) {
                       <button
                         type="button"
                         onClick={() => setDrafts((d) => { const n = { ...d }; delete n[key]; return n; })}
-                        className="px-2 text-xs text-neutral-500 hover:text-neutral-300"
+                        className="ui-control"
                       >
                         cancel
                       </button>
                     )}
                   </div>
                 )}
-                <div className="text-xs text-neutral-600">{help}</div>
+                <div className="ui-caption">{help}</div>
               </div>
             );
           })}
         </div>
 
-        {error && <div className="px-5 py-2 text-xs text-red-300 bg-red-950/40 border-t border-red-900">{error}</div>}
+        {error && <div className="ui-alert ui-alert-error px-5 py-2">{error}</div>}
 
-        <footer className="px-5 py-3 border-t border-neutral-800 flex items-center justify-end gap-2">
-          <button onClick={onClose} className="px-3 py-1.5 text-sm text-neutral-400 hover:text-neutral-200">
+        <footer className="px-5 py-3 ui-divider flex items-center justify-end gap-2" style={{ borderTopWidth: 1 }}>
+          <button onClick={onClose} className="ui-control">
             Close
           </button>
           <button
             onClick={save}
             disabled={busy || Object.keys(drafts).length === 0}
-            className="px-3 py-1.5 text-sm bg-cyan-700 hover:bg-cyan-600 disabled:bg-neutral-800 disabled:text-neutral-600 rounded"
+            className="ui-control ui-control-primary w-auto"
           >
             {busy ? "Saving…" : "Save"}
           </button>

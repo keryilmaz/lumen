@@ -20,6 +20,7 @@
   --highlight-soft: #e8eee3;
   --highlight-ink: #101211;
   --highlight-mute: #5d6559;
+  --accent: var(--highlight);
 
   /* Text on dark surfaces */
   --text-1: #f0f1e9;         /* primary */
@@ -40,7 +41,16 @@
 
   /* Typography rhythm */
   --display-weight: 200;
-  --display-tracking: -0.02em;
+  --display-tracking: 0;
+
+  /* Shared component system */
+  --radius-pill: 999px;
+  --radius-control: 18px;
+  --radius-card: 8px;
+  --radius-panel: 16px;
+  --control-height: 36px;
+  --control-height-large: 44px;
+  --control-px: 12px;
 }
 
 html, body, #root {
@@ -72,6 +82,18 @@ button, input, select, textarea {
   font-family: inherit;
 }
 
+button, select {
+  text-align: inherit;
+}
+
+h1, h2, h3 {
+  text-wrap: balance;
+}
+
+p, li {
+  text-wrap: pretty;
+}
+
 /* Display number pattern: huge, light, tightly tracked.
  * Used for image counts, percentages, slice indices in headers. */
 .display-num {
@@ -82,46 +104,288 @@ button, input, select, textarea {
 }
 
 /* Outline pill button — dark on cream, or light on dark */
+.ui-control,
 .pill-outline {
   display: inline-flex;
   align-items: center;
-  gap: 0.4em;
-  padding: 5px 12px;
-  border-radius: 999px;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: var(--control-height);
+  padding: 0 var(--control-px);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--stroke-strong);
   font-size: 12px;
-  border: 1px solid currentColor;
+  line-height: 1;
   color: var(--text-2);
-  background: transparent;
+  background: var(--bg-base);
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  transition-property: background-color, border-color, color, opacity, transform;
+  transition-duration: 140ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
 }
+.ui-control:hover:not(:disabled),
 .pill-outline:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bg-2);
   color: var(--text-1);
+  border-color: rgba(255, 255, 255, 0.18);
 }
-.pill-outline.on-cream {
+.ui-control:active:not(:disabled),
+.pill-outline:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.ui-control:disabled,
+.pill-outline:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+.ui-control-icon {
+  width: var(--control-height);
+  padding: 0;
+}
+.ui-control-select {
+  appearance: none;
+  justify-content: flex-start;
+  padding-right: 32px;
+  background-color: var(--bg-base);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-3) 50%),
+    linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
+  background-position:
+    calc(100% - 16px) 50%,
+    calc(100% - 11px) 50%;
+  background-repeat: no-repeat;
+  background-size: 5px 5px, 5px 5px;
+}
+.ui-control-primary {
+  min-height: var(--control-height-large);
+  border-color: transparent;
+  background: var(--highlight);
+  color: var(--highlight-ink);
+  font-size: 13px;
+  font-weight: 500;
+}
+.ui-control-primary:hover:not(:disabled) {
+  background: var(--highlight-soft);
+  color: var(--highlight-ink);
+}
+.ui-control-on-cream {
+  background: transparent;
   color: var(--highlight-ink);
   border-color: rgba(20, 23, 26, 0.4);
 }
-.pill-outline.on-cream:hover {
+.ui-control-on-cream:hover:not(:disabled),
+.pill-outline.on-cream {
   background: rgba(20, 23, 26, 0.06);
+  color: var(--highlight-ink);
+}
+.ui-inline-action {
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 1;
+  text-decoration: none;
+  transition: color 140ms cubic-bezier(0.2, 0, 0, 1), opacity 140ms cubic-bezier(0.2, 0, 0, 1);
+}
+.ui-inline-action:hover:not(:disabled) {
+  color: var(--text-1);
+  text-decoration: underline;
+}
+.ui-inline-action:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+.ui-field {
+  min-height: var(--control-height);
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  background: var(--bg-2);
+  color: var(--text-1);
+  font-size: 12.5px;
+  padding: 0 12px;
+  outline: none;
+  transition: border-color 140ms cubic-bezier(0.2, 0, 0, 1), background-color 140ms cubic-bezier(0.2, 0, 0, 1);
+}
+.ui-field:focus {
+  border-color: var(--stroke-strong);
+  background: var(--bg-3);
+}
+.ui-field::placeholder {
+  color: var(--text-4);
+}
+.ui-label {
+  color: var(--text-4);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.ui-title {
+  color: var(--text-1);
+  font-size: 13.5px;
+  line-height: 1.25;
+  font-weight: 500;
+}
+.ui-body {
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.ui-caption {
+  color: var(--text-4);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+.ui-brand {
+  color: var(--text-1);
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.ui-surface {
+  background: var(--bg-1);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--stroke);
+}
+.ui-surface-raised {
+  background: var(--bg-2);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--stroke);
+}
+.ui-modal-panel {
+  background: var(--bg-base);
+  border: 1px solid var(--stroke-strong);
+  border-radius: var(--radius-panel);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.46);
+}
+.ui-backdrop {
+  background: rgba(0, 0, 0, 0.58);
+  backdrop-filter: blur(8px);
+}
+.ui-menu {
+  background: var(--bg-1);
+  border: 1px solid var(--stroke-strong);
+  border-radius: var(--radius-card);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.38);
+}
+.ui-row {
+  min-height: 40px;
+  border-radius: 12px;
+  background: var(--bg-2);
+  color: var(--text-1);
+  transition-property: background-color, color, opacity;
+  transition-duration: 140ms;
+}
+.ui-row:hover:not(:disabled) {
+  background: var(--bg-3);
+}
+.ui-card-cream {
+  background: var(--highlight);
+  border-radius: var(--radius-card);
+  color: var(--highlight-ink);
+}
+.ui-card-cream .ui-title {
+  color: var(--highlight-ink);
+}
+.ui-card-cream .ui-caption,
+.ui-card-cream .ui-body {
+  color: var(--highlight-mute);
+}
+.ui-segmented {
+  min-height: var(--control-height);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-1);
+  border: 1px solid var(--stroke);
+}
+.ui-segmented-button {
+  min-height: calc(var(--control-height) - 6px);
+  border-radius: var(--radius-pill);
+  padding: 0 12px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1;
+  transition: background-color 140ms cubic-bezier(0.2, 0, 0, 1), color 140ms cubic-bezier(0.2, 0, 0, 1);
+}
+.ui-segmented-button:hover {
+  color: var(--text-1);
+}
+.ui-segmented-button-active {
+  background: var(--bg-4);
+  color: var(--text-1);
+}
+.ui-alert {
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.ui-alert-error {
+  background: rgba(239, 68, 68, 0.10);
+  color: rgb(252, 165, 165);
+}
+.ui-status-icon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  line-height: 1;
+}
+.ui-chat-bubble {
+  max-width: 85%;
+  border-radius: var(--radius-card);
+  padding: 8px 12px;
+  color: var(--text-1);
+  background: var(--bg-3);
+  font-size: 13.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.ui-divider {
+  border-color: var(--stroke);
+}
+.ui-overlay-pill {
+  border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, 0.58);
+  color: var(--text-2);
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 6px 10px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.ui-progress-track {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  background: var(--bg-4);
+}
+.ui-progress-bar {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--highlight);
+  transition: width 180ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 /* Card — generous padding, soft rounding, subtle bg shift (no border) */
 .card {
   background: var(--bg-1);
-  border-radius: 18px;
+  border-radius: var(--radius-card);
   padding: 18px 20px;
 }
 .card-elevated {
   background: var(--bg-2);
-  border-radius: 18px;
+  border-radius: var(--radius-card);
   padding: 18px 20px;
 }
 .card-cream {
   background: var(--highlight);
   color: var(--highlight-ink);
-  border-radius: 18px;
+  border-radius: var(--radius-card);
   padding: 18px 20px;
 }
 

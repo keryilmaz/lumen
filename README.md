@@ -10,7 +10,7 @@
 [![React 19](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev/)
 [![Runs locally](https://img.shields.io/badge/Runs-locally-brightgreen.svg)](#privacy)
 
-**Lumen is a local-only web app for viewing DICOM medical imaging (PET, CT, MRI) and getting AI-assisted observations to bring to your oncology, radiology, or specialist visits.** Bring your own API keys (Claude, GPT-5, Gemini); your scans never leave your machine except for the specific images you actively send to one provider for analysis.
+**Lumen is a local-only web app for viewing DICOM medical imaging (PET, CT, MRI) and getting AI-assisted observations to bring to your oncology, radiology, or specialist visits.** Bring your own API keys (Claude, GPT-5.5, Gemini); your scans never leave your machine except for the specific images you actively send to one provider for analysis.
 
 > ⚠️ **Lumen is not a medical device. It does not diagnose.** Every observation is framed as one of multiple possibilities, with explicit comparison to what's typical and a list of specific questions for the actual care team. The AI hallucinates. Use it to prepare better questions, not to make medical decisions.
 
@@ -32,12 +32,14 @@ It is not a substitute for the radiologist. It is a way to be a more informed pa
 - Load DICOM-format imaging discs (PET, CT, MRI, ultrasound, mammography)
 - Scroll slices with mouse wheel; click + drag to circle a region of interest
 - Multi-series support — switch between PET, CT, fusion views with a tab click
+- Multi-study comparison — load current and prior scan dates, then view an approximate matched prior image beside the current image
 - Friendly naming layer translates `PT · PET AC` → `Glucose scan` with a one-line explanation of what each modality shows
 
-**AI assistant — three modes**
+**AI assistant — four modes**
 1. **Look-for-cancer-signs scan** — three-pass deep analysis: surveys 16 evenly-spaced slices, zooms into regions of interest, then examines every slice in the top regions
 2. **Per-slice questions** — circle a region, ask "what is this?" and get a structured response
-3. **Multi-provider** — Claude, GPT-5, or Gemini, switchable per question
+3. **Current-vs-prior comparison** — compare the visible current image against the matched prior image, with limitations called out
+4. **Timeline report** — summarize visible differences across matched PET/CT/fusion series from multiple study dates, with explicit limitations
 
 **Structured findings — the actual product**
 Each AI finding includes:
@@ -57,7 +59,7 @@ One-click export of all findings + your specific questions + a consolidated "que
 
 - **It is not a diagnosis.** Every observation lists multiple possibilities and routes the final call to your care team.
 - **It cannot read SUV values from PNG exports.** Quantitative SUV requires the original DICOM and a calibrated viewer.
-- **It cannot compare to prior scans** unless you load both into the same session.
+- **It does not perform clinical image registration.** Prior comparison uses the selected prior series and matches by relative image position, so it is useful for orientation and appointment questions, not for declaring progression or treatment response.
 - **It does not give prognosis** or treatment recommendations.
 - **It does not store your data on a server.** No telemetry, no analytics, no cloud sync.
 - **It is not HIPAA-certified, FDA-cleared, or CE-marked.** It's a personal-use tool. If you're a clinician, use a clinical-grade viewer.
@@ -82,27 +84,31 @@ cd web && npm install
 cd ../server && npm install
 cd ..
 
-# 4. Mount your DICOM disc (or copy a study folder)
-# On macOS, inserting a DICOM CD usually mounts at /Volumes/<NAME>
-# Inspect what's on the disc:
+# 4. The default local study library is:
+# ~/Desktop/scan-companion/data
+#
+# The app can now import mounted CDs from the Import CD panel.
+# Command-line fallback still works:
 .venv/bin/python tools/python/inspect_disc.py "/Volumes/<NAME>"
+.venv/bin/python tools/python/extract.py "/Volumes/<NAME>" \
+  --out "$HOME/Desktop/scan-companion/data" \
+  --study-id 2025-12-02-scan \
+  --study-label "2025-12-02 scan" \
+  --study-date auto
+# Writes to data/studies/<study-id>/<series>/*.png + study.json
 
-# 5. Extract the series to PHI-scrubbed PNGs
-.venv/bin/python tools/python/extract.py "/Volumes/<NAME>"
-# Writes to ./data/<series>/*.png + meta.json
-
-# 6. Add an API key via the in-app Settings (gear icon),
+# 5. Add an API key via the in-app Settings (gear icon),
 #    or copy .env.example to .env and edit
 cp .env.example .env
 
-# 7. Start both servers in one command (uses concurrently)
+# 6. Start both servers in one command (uses concurrently)
 npm run dev    # boots Express :5174 + Vite :5173 in parallel
 
 # Or in two separate terminals if you prefer:
 #   cd server && npm run dev
 #   cd web    && npm run dev
 
-# 8. Open http://localhost:5173
+# 7. Open http://localhost:5173
 ```
 
 ---
@@ -115,7 +121,7 @@ npm run dev    # boots Express :5174 + Vite :5173 in parallel
 │                                                             │
 │  ┌──────────────────────┐    ┌──────────────────────────┐  │
 │  │   Canvas viewer      │    │   Multi-provider chat    │  │
-│  │   (mouse + scroll)   │    │   (Claude/GPT-5/Gemini)  │  │
+│  │   (mouse + scroll)   │    │  (Claude/GPT-5.5/Gemini) │  │
 │  └──────────┬───────────┘    └────────────┬─────────────┘  │
 └─────────────┼──────────────────────────────┼────────────────┘
               │                              │
@@ -125,11 +131,14 @@ npm run dev    # boots Express :5174 + Vite :5173 in parallel
 ┌─────────────────────────────────────────────────────────────┐
 │  Local Express server (loopback only — 127.0.0.1:5174)      │
 │                                                             │
-│  • /api/study           — list extracted series             │
+│  • /api/study           — list extracted studies + series   │
 │  • /api/scan/{survey,zoom,deep}  — three-pass deep scan     │
 │  • /api/ask             — single-slice question             │
+│  • /api/compare         — current image vs matched prior     │
+│  • /api/progression/report — matched-series timeline report │
+│  • /api/import/*        — inspect/import mounted CDs         │
 │  • /api/keys            — add/remove API keys (writes .env) │
-│  • /data/<series>/<png> — serves PNG slices to browser      │
+│  • /data/<study>/<png>  — serves PNG slices to browser      │
 │                                                             │
 │  Validates with Zod; fails closed; never echoes raw model   │
 │  output unless it matches the structured schema.            │

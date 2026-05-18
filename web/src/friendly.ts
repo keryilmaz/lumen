@@ -112,15 +112,15 @@ export function friendlyName(meta: SeriesMeta): FriendlyName {
 
 /** When two series produce the same short label (e.g. two OT/AXIAL series),
  *  append the image count so users can tell them apart in the tab strip. */
-export function disambiguateShorts(series: { series_id: string; n_slices: number; short: string }[]): Map<string, string> {
+export function disambiguateShorts(series: { key: string; n_slices: number; short: string }[]): Map<string, string> {
   const counts = new Map<string, number>();
   for (const s of series) counts.set(s.short, (counts.get(s.short) ?? 0) + 1);
   const out = new Map<string, string>();
   for (const s of series) {
     if ((counts.get(s.short) ?? 0) > 1) {
-      out.set(s.series_id, `${s.short} (${s.n_slices})`);
+      out.set(s.key, `${s.short} (${s.n_slices})`);
     } else {
-      out.set(s.series_id, s.short);
+      out.set(s.key, s.short);
     }
   }
   return out;

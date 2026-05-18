@@ -21,6 +21,8 @@ import { friendlyName } from "./friendly";
 
 type Props = {
   series: SeriesMeta;
+  comparisonSeries?: SeriesMeta | null;
+  timelineSeries?: SeriesMeta[];
   annotations: Annotation[];
   onUserAnnotation: (a: Omit<Annotation, "id" | "source">) => void;
   onSliceChange: (sliceIndex: number) => void;
@@ -40,6 +42,8 @@ type Drawing = { start: Pt; current: Pt };
 
 export function Viewer({
   series,
+  comparisonSeries,
+  timelineSeries = [],
   annotations,
   onUserAnnotation,
   onSliceChange,
@@ -47,20 +51,34 @@ export function Viewer({
   flaggedSlices,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const comparisonCanvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const comparisonImgRef = useRef<HTMLImageElement | null>(null);
   const loadedUrlRef = useRef<string | null>(null);
+  const comparisonLoadedUrlRef = useRef<string | null>(null);
   const resizeRafRef = useRef<number | null>(null);
 
   const [sliceIndex, setSliceIndex] = useState(Math.floor(series.n_slices / 2));
   const [renderTick, setRenderTick] = useState(0);
   const [drawing, setDrawing] = useState<Drawing | null>(null);
 
-  const sliceUrl = useMemo(
-    () => `/data/${series.series_id}/${series.slices[sliceIndex]?.filename ?? ""}`,
-    [series.series_id, series.slices, sliceIndex],
-  );
+  const sliceUrl = useMemo(() => sliceUrlFor(series, sliceIndex), [series, sliceIndex]);
+  const comparisonSliceIndex = useMemo(() => {
+    if (!comparisonSeries) return null;
+    const currentMax = Math.max(1, series.n_slices - 1);
+    const priorMax = Math.max(0, comparisonSeries.n_slices - 1);
+    return Math.max(0, Math.min(priorMax, Math.round((sliceIndex / currentMax) * priorMax)));
+  }, [comparisonSeries, series.n_slices, sliceIndex]);
+  const comparisonSliceUrl = useMemo(() => {
+    if (!comparisonSeries || comparisonSliceIndex === null) return null;
+    return sliceUrlFor(comparisonSeries, comparisonSliceIndex);
+  }, [comparisonSeries, comparisonSliceIndex]);
   const sliceUrlRef = useRef(sliceUrl);
   sliceUrlRef.current = sliceUrl;
+  const comparisonSliceUrlRef = useRef(comparisonSliceUrl);
+  comparisonSliceUrlRef.current = comparisonSliceUrl;
+  const comparisonSliceIndexRef = useRef(comparisonSliceIndex);
+  comparisonSliceIndexRef.current = comparisonSliceIndex;
 
   const annotationsRef = useRef(annotations);
   annotationsRef.current = annotations;
@@ -68,13 +86,17 @@ export function Viewer({
   sliceIndexRef.current = sliceIndex;
   const seriesIdRef = useRef(series.series_id);
   seriesIdRef.current = series.series_id;
+  const studyIdRef = useRef(series.study_id);
+  studyIdRef.current = series.study_id;
+  const comparisonSeriesRef = useRef(comparisonSeries);
+  comparisonSeriesRef.current = comparisonSeries;
 
   // Reset to middle slice when series changes
   useEffect(() => {
     const mid = Math.floor(series.n_slices / 2);
     setSliceIndex(mid);
     onSliceChange(mid);
-  }, [series.series_id, series.n_slices]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [series.series_key, series.n_slices]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load image for current slice — cancellable to prevent stale onload races
   useEffect(() => {
@@ -99,6 +121,36 @@ export function Viewer({
       img.onerror = null;
     };
   }, [sliceUrl, onReady]);
+
+  // Load the matched prior/comparison image when comparison mode is active.
+  useEffect(() => {
+    if (!comparisonSeries || !comparisonSliceUrl) {
+      comparisonImgRef.current = null;
+      comparisonLoadedUrlRef.current = null;
+      setRenderTick((t) => t + 1);
+      return;
+    }
+    const img = new Image();
+    let cancelled = false;
+    img.onload = () => {
+      if (cancelled) return;
+      comparisonImgRef.current = img;
+      comparisonLoadedUrlRef.current = comparisonSliceUrl;
+      setRenderTick((t) => t + 1);
+    };
+    img.onerror = () => {
+      if (cancelled) return;
+      comparisonImgRef.current = null;
+      comparisonLoadedUrlRef.current = null;
+      console.warn("comparison image load failed:", comparisonSliceUrl);
+    };
+    img.src = comparisonSliceUrl;
+    return () => {
+      cancelled = true;
+      img.onload = null;
+      img.onerror = null;
+    };
+  }, [comparisonSeries, comparisonSliceUrl]);
 
   // Render
   useEffect(() => {
@@ -146,6 +198,28 @@ export function Viewer({
     }
   }, [renderTick, annotations, sliceIndex, drawing, sliceUrl]);
 
+  // Render comparison image into the right-hand canvas. It is intentionally
+  // read-only: interactions and annotations stay anchored to the active scan.
+  useEffect(() => {
+    if (!comparisonSeries || !comparisonSliceUrl) return;
+    const canvas = comparisonCanvasRef.current;
+    const img = comparisonImgRef.current;
+    if (!canvas || !img || comparisonLoadedUrlRef.current !== comparisonSliceUrl) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const parent = canvas.parentElement!;
+    const pw = parent.clientWidth;
+    const ph = parent.clientHeight;
+    const fitScale = Math.min(pw / img.width, ph / img.height);
+    canvas.width = Math.max(1, Math.floor(img.width * fitScale));
+    canvas.height = Math.max(1, Math.floor(img.height * fitScale));
+    canvas.style.width = `${canvas.width}px`;
+    canvas.style.height = `${canvas.height}px`;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  }, [renderTick, comparisonSeries, comparisonSliceUrl]);
+
   // Re-render when the canvas's PARENT changes size — splitter drags don't fire window 'resize'.
   // ResizeObserver covers both the splitter and window resize on modern runtimes; we keep the
   // window 'resize' listener as a fallback. rAF coalesces multiple callbacks per frame.
@@ -165,6 +239,8 @@ export function Viewer({
     const observer =
       typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleResizeRender);
     observer?.observe(parent);
+    const comparisonParent = comparisonCanvasRef.current?.parentElement;
+    if (comparisonParent) observer?.observe(comparisonParent);
     window.addEventListener("resize", scheduleResizeRender);
 
     return () => {
@@ -175,7 +251,7 @@ export function Viewer({
         resizeRafRef.current = null;
       }
     };
-  }, []);
+  }, [comparisonSeries]);
 
   const onWheel = useCallback(
     (e: React.WheelEvent<HTMLCanvasElement>) => {
@@ -294,6 +370,18 @@ export function Viewer({
         );
       }
       const slicePng = full.toDataURL("image/png").split(",")[1];
+      const cSeries = comparisonSeriesRef.current;
+      const cUrl = comparisonSliceUrlRef.current;
+      const cSliceIndex = comparisonSliceIndexRef.current ?? undefined;
+      const cImg = comparisonImgRef.current;
+      let comparisonSlicePng: string | undefined;
+      if (cSeries && cUrl && cImg && comparisonLoadedUrlRef.current === cUrl) {
+        const comparisonFull = document.createElement("canvas");
+        comparisonFull.width = cImg.width;
+        comparisonFull.height = cImg.height;
+        comparisonFull.getContext("2d")!.drawImage(cImg, 0, 0);
+        comparisonSlicePng = comparisonFull.toDataURL("image/png").split(",")[1];
+      }
 
       // Crop the latest user annotation on this slice (if any)
       const userAnno = [...annos].reverse().find(
@@ -319,9 +407,14 @@ export function Viewer({
 
       return {
         slicePng,
+        comparisonSlicePng,
         roiPng,
         sliceIndex: sIndex,
+        comparisonSliceIndex: cSliceIndex,
         seriesId: sId,
+        studyId: studyIdRef.current,
+        comparisonSeriesId: cSeries?.series_id,
+        comparisonStudyId: cSeries?.study_id,
         imageWidth: img.width,
         imageHeight: img.height,
         sliceUrl: url,
@@ -344,59 +437,49 @@ export function Viewer({
   }, [captureRef, onReady, gotoRef, series.n_slices, onSliceChange]);
 
   const fn = friendlyName(series);
+  const comparisonFn = comparisonSeries ? friendlyName(comparisonSeries) : null;
+  const hasReference = !!comparisonSeries || timelineSeries.length > 0;
 
   return (
     <div className="flex flex-col h-full" style={{ background: "var(--bg-base)" }}>
-      <div
-        className="px-5 pt-4 pb-3 flex items-start justify-between gap-6"
-        style={{ background: "var(--bg-base)" }}
-      >
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-2">
-            <h2 className="text-[15px] font-medium truncate" style={{ color: "var(--text-1)" }}>
-              {fn.title}
-            </h2>
-            <span
-              style={{ color: "var(--text-4)" }}
-              className="text-[10.5px] shrink-0 uppercase tracking-wider"
-              title={fn.technical}
-            >
-              {series.columns}×{series.rows}
-            </span>
-          </div>
-          {fn.hint && (
-            <p className="text-[12px] mt-0.5" style={{ color: "var(--text-3)" }}>
-              {fn.hint}
-            </p>
+      <div className="flex-1 flex overflow-hidden" style={{ background: "#000" }}>
+        <div className="relative flex-1 min-w-0 flex items-center justify-center overflow-hidden">
+          {hasReference && (
+            <div className="ui-overlay-pill absolute left-3 top-3 z-10">
+              current · {series.study_label}
+            </div>
           )}
+          <canvas
+            ref={canvasRef}
+            onWheel={onWheel}
+            onMouseDown={onMouseDown}
+            onMouseMove={onMouseMove}
+            onMouseUp={onMouseUp}
+            onMouseLeave={(e) => {
+              // Don't drop the in-progress drag on mouseleave; pointer capture keeps us subscribed.
+              // Only cancel if the pointer button is no longer pressed.
+              if (drawing && e.buttons === 0) setDrawing(null);
+            }}
+            style={{ cursor: "crosshair" }}
+          />
         </div>
-        {/* Display-number pattern: large, light-weight image counter */}
-        <div className="text-right shrink-0">
-          <div className="display-num text-[36px]" style={{ color: "var(--text-1)" }}>
-            {sliceIndex + 1}
-            <span className="text-[14px] font-normal ml-1" style={{ color: "var(--text-4)" }}>
-              / {series.n_slices}
-            </span>
+        {comparisonSeries && (
+          <div className="relative flex-1 min-w-0 flex items-center justify-center overflow-hidden" style={{ borderLeft: "1px solid var(--stroke-strong)" }}>
+            <div className="ui-overlay-pill absolute left-3 top-3 z-10">
+              prior · {comparisonSeries.study_label} · image {(comparisonSliceIndex ?? 0) + 1}/{comparisonSeries.n_slices}
+            </div>
+            <canvas ref={comparisonCanvasRef} style={{ cursor: "default" }} />
           </div>
-          <div className="text-[10.5px] uppercase tracking-wider mt-0.5" style={{ color: "var(--text-4)" }}>
-            image
-          </div>
-        </div>
-      </div>
-      <div className="flex-1 flex items-center justify-center overflow-hidden" style={{ background: "#000" }}>
-        <canvas
-          ref={canvasRef}
-          onWheel={onWheel}
-          onMouseDown={onMouseDown}
-          onMouseMove={onMouseMove}
-          onMouseUp={onMouseUp}
-          onMouseLeave={(e) => {
-            // Don't drop the in-progress drag on mouseleave; pointer capture keeps us subscribed.
-            // Only cancel if the pointer button is no longer pressed.
-            if (drawing && e.buttons === 0) setDrawing(null);
-          }}
-          style={{ cursor: "crosshair" }}
-        />
+        )}
+        {timelineSeries.map((timelineItem, i) => (
+          <ReferencePane
+            key={timelineItem.series_key}
+            series={timelineItem}
+            activeSliceIndex={sliceIndex}
+            activeTotal={series.n_slices}
+            label={i === 0 ? "oldest" : "timeline"}
+          />
+        ))}
       </div>
       <div className="px-4 py-3" style={{ background: "var(--bg-base)" }}>
         <div className="relative">
@@ -429,9 +512,42 @@ export function Viewer({
             </div>
           )}
         </div>
-        <div className="text-[11px] mt-2" style={{ color: "var(--text-4)" }}>
-          scroll · flip through images &nbsp;·&nbsp; click+drag · circle a spot to ask about
+        <div className="mt-3 flex items-start justify-between gap-5">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline gap-2">
+              <h2 className="ui-title truncate">
+                {fn.title}
+              </h2>
+              <span
+                className="ui-label shrink-0"
+                title={fn.technical}
+              >
+                {series.columns}×{series.rows}
+              </span>
+            </div>
+            {fn.hint && (
+              <p className="ui-body mt-0.5 line-clamp-2" style={{ color: "var(--text-3)" }}>
+                {fn.hint}
+              </p>
+            )}
+          </div>
+          <div className="text-right shrink-0">
+            <div className="display-num text-[28px]" style={{ color: "var(--text-1)" }}>
+              {sliceIndex + 1}
+              <span className="text-[12px] font-normal ml-1" style={{ color: "var(--text-4)" }}>
+                / {series.n_slices}
+              </span>
+            </div>
+            <div className="ui-label">
+              image
+            </div>
+          </div>
         </div>
+        {comparisonSeries && comparisonFn && (
+          <div className="ui-caption mt-2">
+            Comparing with {comparisonFn.short} from {comparisonSeries.study_label}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -457,6 +573,100 @@ function drawCircle(
     ctx.fillText(label, x + r + 4, y);
   }
   ctx.restore();
+}
+
+function ReferencePane({
+  series,
+  activeSliceIndex,
+  activeTotal,
+  label,
+}: {
+  series: SeriesMeta;
+  activeSliceIndex: number;
+  activeTotal: number;
+  label: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const loadedUrlRef = useRef<string | null>(null);
+  const [renderTick, setRenderTick] = useState(0);
+  const sliceIndex = useMemo(() => {
+    const currentMax = Math.max(1, activeTotal - 1);
+    const refMax = Math.max(0, series.n_slices - 1);
+    return Math.max(0, Math.min(refMax, Math.round((activeSliceIndex / currentMax) * refMax)));
+  }, [activeSliceIndex, activeTotal, series.n_slices]);
+  const sliceUrl = useMemo(() => sliceUrlFor(series, sliceIndex), [series, sliceIndex]);
+
+  useEffect(() => {
+    const img = new Image();
+    let cancelled = false;
+    img.onload = () => {
+      if (cancelled) return;
+      imgRef.current = img;
+      loadedUrlRef.current = sliceUrl;
+      setRenderTick((t) => t + 1);
+    };
+    img.onerror = () => {
+      if (cancelled) return;
+      imgRef.current = null;
+      loadedUrlRef.current = null;
+      console.warn("timeline image load failed:", sliceUrl);
+    };
+    img.src = sliceUrl;
+    return () => {
+      cancelled = true;
+      img.onload = null;
+      img.onerror = null;
+    };
+  }, [sliceUrl]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const img = imgRef.current;
+    if (!canvas || !img || loadedUrlRef.current !== sliceUrl) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const parent = canvas.parentElement!;
+    const fitScale = Math.min(parent.clientWidth / img.width, parent.clientHeight / img.height);
+    canvas.width = Math.max(1, Math.floor(img.width * fitScale));
+    canvas.height = Math.max(1, Math.floor(img.height * fitScale));
+    canvas.style.width = `${canvas.width}px`;
+    canvas.style.height = `${canvas.height}px`;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  }, [renderTick, sliceUrl]);
+
+  useEffect(() => {
+    const parent = canvasRef.current?.parentElement;
+    if (!parent) return;
+    const rerender = () => setRenderTick((t) => t + 1);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(rerender);
+    observer?.observe(parent);
+    window.addEventListener("resize", rerender);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", rerender);
+    };
+  }, []);
+
+  return (
+    <div className="relative flex-1 min-w-0 flex items-center justify-center overflow-hidden" style={{ borderLeft: "1px solid var(--stroke-strong)" }}>
+      <div className="ui-overlay-pill absolute left-3 top-3 z-10">
+        {label} · {series.study_label} · image {sliceIndex + 1}/{series.n_slices}
+      </div>
+      <canvas ref={canvasRef} style={{ cursor: "default" }} />
+    </div>
+  );
+}
+
+function sliceUrlFor(series: SeriesMeta, index: number): string {
+  const file = encodeURIComponent(series.slices[index]?.filename ?? "");
+  const seriesId = encodeURIComponent(series.series_id);
+  if (series.study_id && series.study_id !== "_legacy") {
+    return `/data/studies/${encodeURIComponent(series.study_id)}/${seriesId}/${file}`;
+  }
+  return `/data/${seriesId}/${file}`;
 }
 
 function aiColor(provider?: string): string {
