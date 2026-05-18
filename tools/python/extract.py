@@ -8,12 +8,25 @@ Output layout:
       slice_0001.png
       ...
 
+  # With --study-id, for multiple scan dates:
+  data/
+    studies/
+      <study_id>/
+        study.json
+        <series_id>/
+          meta.json
+          slice_0000.png
+          ...
+
 Run:
   ./.venv/bin/python tools/python/extract.py [disc_path] [--series SE00012] [--workers 8]
+  ./.venv/bin/python tools/python/extract.py [disc_path] --study-id 2026-05-current --study-label "May 2026 PET/CT" --study-date auto
 
 PHI tags removed: PatientName, PatientID, PatientBirthDate, AccessionNumber,
 InstitutionName, InstitutionAddress, ReferringPhysicianName, OperatorsName,
 PhysicianOfRecord, RequestingPhysician, StudyID, StudyDate, StudyTime.
+StudyDate is optionally copied only into the study-level manifest as study_date
+for timeline ordering. It is not kept inside per-series DICOM metadata sidecars.
 
 We keep: Modality, SeriesDescription, ImageType, ViewPosition, ImageLaterality,
 SliceLocation, ImagePositionPatient, PixelSpacing, SliceThickness,
@@ -23,9 +36,11 @@ RescaleSlope/Intercept, WindowCenter/Width, RadiopharmaceuticalInformationSequen
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
+import re
 import sys
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -35,10 +50,54 @@ from PIL import Image
 
 DEFAULT_DISC = "/Volumes/Untitled UDF Volume"
 DEFAULT_OUT = Path(__file__).resolve().parents[2] / "data"
+SAFE_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+PROGRESS_PREFIX = "__LUMEN_PROGRESS__"
+
+
+def _emit_progress(**payload):
+    print(f"{PROGRESS_PREFIX}{json.dumps(payload, separators=(',', ':'))}", flush=True)
 
 
 def _safe_get(ds, name, default=None):
     return getattr(ds, name, default)
+
+
+def _dicom_date_to_iso(value) -> str:
+    text = str(value or "").strip()
+    if len(text) == 8 and text.isdigit():
+        return f"{text[:4]}-{text[4:6]}-{text[6:8]}"
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", text):
+        return text
+    return ""
+
+
+def _slug(value: str) -> str:
+    out = re.sub(r"[^a-z0-9._-]+", "-", value.lower()).strip("-")
+    return out[:48] or "study"
+
+
+def _study_signature(study_date: str, series: list[dict]) -> str:
+    parts = [
+        f"{str(s.get('modality', '')).upper()}::{str(s.get('series_description', '')).strip().lower()}::{int(s.get('n_slices', 0) or 0)}"
+        for s in series
+    ]
+    return f"{study_date}|{'|'.join(sorted(parts))}"
+
+
+def _read_first_study_date(disc_path: Path, series_ids: list[str]) -> str:
+    for sid in series_ids:
+        series_src = disc_path / "images" / sid
+        if not series_src.is_dir():
+            continue
+        for f in sorted(p for p in series_src.iterdir() if p.is_file()):
+            try:
+                ds = pydicom.dcmread(str(f), stop_before_pixels=True, force=True)
+                date = _dicom_date_to_iso(getattr(ds, "StudyDate", ""))
+                if date:
+                    return date
+            except Exception:
+                continue
+    return ""
 
 
 def _scrubbed_meta(ds: pydicom.Dataset) -> dict:
@@ -175,7 +234,17 @@ def _convert_one(args):
         return (src_path, f"error: {type(e).__name__}: {e}")
 
 
-def extract_series(disc_path: Path, series_id: str, out_root: Path, workers: int = 8) -> dict:
+def extract_series(
+    disc_path: Path,
+    series_id: str,
+    out_root: Path,
+    workers: int = 8,
+    study_id: str | None = None,
+    study_label: str | None = None,
+    study_date: str = "",
+    series_index: int = 1,
+    total_series: int = 1,
+) -> dict:
     series_src = disc_path / "images" / series_id
     if not series_src.is_dir():
         raise FileNotFoundError(f"Series not found: {series_src}")
@@ -201,11 +270,17 @@ def extract_series(disc_path: Path, series_id: str, out_root: Path, workers: int
         return {"series_id": series_id, "n_slices": 0, "status": "no readable headers"}
 
     modality = str(getattr(first_ds, "Modality", ""))
+    series_description = str(getattr(first_ds, "SeriesDescription", ""))
     out_dir = out_root / series_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
     meta = _scrubbed_meta(first_ds)
     meta["series_id"] = series_id
+    if study_id:
+        meta["study_id"] = study_id
+        meta["study_label"] = study_label or study_id
+        meta["study_date"] = study_date
+        meta["series_key"] = f"{study_id}:{series_id}"
     meta["n_slices"] = len(indexed)
     meta["slices"] = []
 
@@ -220,17 +295,42 @@ def extract_series(disc_path: Path, series_id: str, out_root: Path, workers: int
             "instance_number": int(getattr(ds, "InstanceNumber", i) or i) if ds is not None else i,
         })
 
-    print(f"[{series_id}] converting {len(jobs)} slices ({modality}) with {workers} workers...")
+    _emit_progress(
+        phase="series_start",
+        series_id=series_id,
+        series_index=series_index,
+        total_series=total_series,
+        modality=modality,
+        series_description=series_description,
+        n_slices=len(jobs),
+        converted=0,
+    )
+    print(f"[{series_id}] converting {len(jobs)} slices ({modality}) with {workers} workers...", flush=True)
     n_ok = 0
     n_err = 0
+    n_done = 0
+    progress_step = max(1, min(50, len(jobs) // 20 or 1))
     with ProcessPoolExecutor(max_workers=workers) as pool:
         for path, status in pool.map(_convert_one, jobs, chunksize=8):
+            n_done += 1
             if status == "ok":
                 n_ok += 1
             else:
                 n_err += 1
                 if n_err <= 5:
-                    print(f"  ! {path.name}: {status}")
+                    print(f"  ! {path.name}: {status}", flush=True)
+            if n_done == len(jobs) or n_done % progress_step == 0:
+                _emit_progress(
+                    phase="series_progress",
+                    series_id=series_id,
+                    series_index=series_index,
+                    total_series=total_series,
+                    modality=modality,
+                    series_description=series_description,
+                    n_slices=len(jobs),
+                    converted=n_done,
+                    errors=n_err,
+                )
 
     meta["n_converted"] = n_ok
     meta["n_errors"] = n_err
@@ -238,7 +338,18 @@ def extract_series(disc_path: Path, series_id: str, out_root: Path, workers: int
     with open(out_dir / "meta.json", "w") as f:
         json.dump(meta, f, indent=2)
 
-    print(f"[{series_id}] done: {n_ok} ok, {n_err} errors → {out_dir}")
+    _emit_progress(
+        phase="series_done",
+        series_id=series_id,
+        series_index=series_index,
+        total_series=total_series,
+        modality=modality,
+        series_description=series_description,
+        n_slices=len(jobs),
+        converted=len(jobs),
+        errors=n_err,
+    )
+    print(f"[{series_id}] done: {n_ok} ok, {n_err} errors → {out_dir}", flush=True)
     return {"series_id": series_id, "n_slices": len(jobs), "n_ok": n_ok, "status": "ok"}
 
 
@@ -247,11 +358,27 @@ def main():
     ap.add_argument("disc_path", nargs="?", default=DEFAULT_DISC)
     ap.add_argument("--series", help="Single series ID (e.g. SE00012). Default: all viewable series.")
     ap.add_argument("--out", default=str(DEFAULT_OUT))
+    ap.add_argument(
+        "--study-id",
+        help="Safe ID for multi-study comparison output (e.g. 2026-05-current). Writes to data/studies/<study-id>/.",
+    )
+    ap.add_argument(
+        "--study-label",
+        help="Human label for the study picker (e.g. 'May 2026 PET/CT'). Used with --study-id.",
+    )
+    ap.add_argument(
+        "--study-date",
+        default="",
+        help="YYYY-MM-DD study date for timeline ordering, or 'auto' to read DICOM StudyDate.",
+    )
     ap.add_argument("--workers", type=int, default=8)
     args = ap.parse_args()
 
     disc = Path(args.disc_path)
-    out = Path(args.out)
+    base_out = Path(args.out)
+    if args.study_id and not SAFE_ID_RE.match(args.study_id):
+        raise SystemExit("--study-id may only contain letters, numbers, dot, underscore, and dash (max 64 chars)")
+    out = base_out / "studies" / args.study_id if args.study_id else base_out
     out.mkdir(parents=True, exist_ok=True)
 
     images_dir = disc / "images"
@@ -262,16 +389,49 @@ def main():
         series_list = sorted(p.name for p in images_dir.iterdir() if p.is_dir())
         series_list = [s for s in series_list if s != "SE00999"]
 
-    print(f"Extracting from: {disc}")
-    print(f"Output dir: {out}")
-    print(f"Series: {series_list}\n")
+    study_date = ""
+    if args.study_date == "auto":
+        study_date = _read_first_study_date(disc, series_list)
+    elif args.study_date:
+        study_date = _dicom_date_to_iso(args.study_date)
+        if not study_date:
+            raise SystemExit("--study-date must be YYYY-MM-DD, YYYYMMDD, 'auto', or empty")
+    study_label = args.study_label
+    if args.study_id and not study_label:
+        study_label = f"{study_date} scan" if study_date else args.study_id
+
+    _emit_progress(phase="start", total_series=len(series_list), completed_series=0)
+    print(f"Extracting from: {disc}", flush=True)
+    print(f"Output dir: {out}", flush=True)
+    if args.study_id:
+        print(f"Study: {args.study_id} · {study_label or args.study_id} · {study_date or 'date unknown'}", flush=True)
+    print(f"Series: {series_list}\n", flush=True)
 
     results = []
-    for sid in series_list:
+    for idx, sid in enumerate(series_list, start=1):
         try:
-            results.append(extract_series(disc, sid, out, workers=args.workers))
+            results.append(
+                extract_series(
+                    disc,
+                    sid,
+                    out,
+                    workers=args.workers,
+                    study_id=args.study_id,
+                    study_label=study_label,
+                    study_date=study_date,
+                    series_index=idx,
+                    total_series=len(series_list),
+                )
+            )
         except Exception as e:
-            print(f"[{sid}] FAILED: {e}", file=sys.stderr)
+            _emit_progress(
+                phase="series_failed",
+                series_id=sid,
+                series_index=idx,
+                total_series=len(series_list),
+                error=str(e),
+            )
+            print(f"[{sid}] FAILED: {e}", file=sys.stderr, flush=True)
             results.append({"series_id": sid, "status": f"failed: {e}"})
 
     # Rebuild study manifest from ALL series with a meta.json on disk (not just this run),
@@ -294,10 +454,21 @@ def main():
         except Exception:
             pass
 
-    study_meta = {"source": str(disc), "series": all_series}
+    study_meta = {
+        "source": str(disc),
+        "source_volume": str(disc),
+        "study_date": study_date,
+        "imported_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "series": all_series,
+        "study_signature": _study_signature(study_date, all_series),
+    }
+    if args.study_id:
+        study_meta["study_id"] = args.study_id
+        study_meta["label"] = study_label or args.study_id
     with open(out / "study.json", "w") as f:
         json.dump(study_meta, f, indent=2)
-    print(f"\nWrote study manifest → {out / 'study.json'} ({len(all_series)} series)")
+    _emit_progress(phase="complete", total_series=len(series_list), completed_series=len(series_list))
+    print(f"\nWrote study manifest → {out / 'study.json'} ({len(all_series)} series)", flush=True)
 
 
 if __name__ == "__main__":

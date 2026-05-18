@@ -1,7 +1,7 @@
 {
   "name": "lumen",
   "version": "0.1.0",
-  "description": "Local AI assistant for medical imaging — view DICOM scans (PET, CT, MRI), get structured AI observations, prepare questions for the doctor. BYO Claude/GPT-5/Gemini key. Loopback-only, PHI-scrubbed. Not a medical device.",
+  "description": "Local AI assistant for medical imaging — view DICOM scans (PET, CT, MRI), get structured AI observations, prepare questions for the doctor. BYO Claude/GPT-5.5/Gemini key. Loopback-only, PHI-scrubbed. Not a medical device.",
   "license": "MIT",
   "homepage": "https://github.com/keryilmaz/lumen#readme",
   "repository": {
@@ -19,7 +19,7 @@
     "radiology",
     "ai-assistant",
     "claude",
-    "gpt-5",
+    "gpt-5.5",
     "gemini",
     "privacy-first",
     "local-only"

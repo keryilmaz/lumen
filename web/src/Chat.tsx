@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChatTurn, Finding, Provider, SeriesMeta, ScanPhase } from "./types";
+import type {
+  ChatTurn,
+  ComparisonEvidence,
+  ComparisonFindingStatus,
+  Finding,
+  Provider,
+  ProgressionCompareHistoryItem,
+  ProgressionCompareJob,
+  ProgressionCompareResult,
+  ScanPhase,
+  ScanReportMeta,
+} from "./types";
 
 type Props = {
-  /** Kept in the contract so callers don't have to change shape if Chat ever
-   *  needs the active series again; currently unused (the active series name
-   *  is rendered in the main app header tab strip, not in Chat). */
-  series?: SeriesMeta;
   history: ChatTurn[];
   busy: boolean;
   provider: Provider;
@@ -14,7 +21,20 @@ type Props = {
   askDisabled?: boolean;
   onScan?: () => void;
   onJumpToSlice?: (sliceIndex: number) => void;
+  onJumpToEvidence?: (seriesKey: string, sliceIndex: number) => void;
   scanPhase?: ScanPhase;
+  scanReport?: ScanReportMeta | null;
+  scanTargetLabel?: string;
+  onCreateReport?: () => void;
+  createReportDisabled?: boolean;
+  reportJob?: ProgressionCompareJob | null;
+  timelineReport?: ProgressionCompareResult | null;
+  reportHistory?: ProgressionCompareHistoryItem[];
+  matchingSavedReportId?: string | null;
+  onLoadReport?: (resultId: string) => void;
+  onExportReport?: (resultId: string) => void;
+  onDeleteReport?: (resultId: string) => void;
+  selectedDateCount?: number;
 };
 
 const SEVERITY_LABEL: Record<Finding["severity"], string> = {
@@ -22,10 +42,10 @@ const SEVERITY_LABEL: Record<Finding["severity"], string> = {
   "worth-asking": "worth asking",
   "clearly-physiologic": "likely normal",
 };
-const SEVERITY_DOT: Record<Finding["severity"], string> = {
-  notable: "bg-rose-400",
-  "worth-asking": "bg-amber-400",
-  "clearly-physiologic": "bg-neutral-400",
+const SEVERITY_DOT_COLOR: Record<Finding["severity"], string> = {
+  notable: "var(--notable)",
+  "worth-asking": "var(--worth)",
+  "clearly-physiologic": "var(--physiologic)",
 };
 
 const PHASE_COPY: Record<Exclude<ScanPhase, "idle" | "done">, { label: string; sub: string }> = {
@@ -45,21 +65,36 @@ const PHASE_COPY: Record<Exclude<ScanPhase, "idle" | "done">, { label: string; s
 
 const PROVIDER_LABEL: Record<Provider, string> = {
   claude: "Claude",
-  gpt5: "GPT-5",
+  gpt5: "GPT-5.5",
   gemini: "Gemini",
 };
 
-const PROVIDER_DOT: Record<Provider, string> = {
-  claude: "bg-amber-400",
-  gpt5: "bg-emerald-400",
-  gemini: "bg-violet-400",
+const PROVIDER_DOT_COLOR: Record<Provider, string> = {
+  claude: "#facc15",
+  gpt5: "#34d399",
+  gemini: "#a78bfa",
 };
 
-const PROVIDER_TEXT: Record<Provider, string> = {
-  claude: "text-amber-300",
-  gpt5: "text-emerald-300",
-  gemini: "text-violet-300",
+const PROVIDER_TEXT_COLOR: Record<Provider, string> = {
+  claude: "#fde68a",
+  gpt5: "#a7f3d0",
+  gemini: "#ddd6fe",
 };
+
+function reportDateLabel(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function reportStudyLabel(item: ProgressionCompareHistoryItem): string {
+  return item.studies.map((study) => study.studyDate || study.studyLabel).join(" → ");
+}
 
 export function Chat({
   history,
@@ -70,10 +105,34 @@ export function Chat({
   askDisabled,
   onScan,
   onJumpToSlice,
+  onJumpToEvidence,
   scanPhase = "idle",
+  scanReport,
+  scanTargetLabel = "selected view",
+  onCreateReport,
+  createReportDisabled,
+  reportJob,
+  timelineReport,
+  reportHistory = [],
+  matchingSavedReportId,
+  onLoadReport,
+  onExportReport,
+  onDeleteReport,
+  selectedDateCount = 0,
 }: Props) {
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const scanRunning = busy && scanPhase !== "idle" && scanPhase !== "done";
+  const reportRunning = reportJob?.status === "queued" || reportJob?.status === "running";
+  const reportPercent = Math.max(0, Math.min(100, reportJob?.progress?.percent ?? 0));
+  const currentSavedReportLoaded = !!timelineReport && !!matchingSavedReportId && timelineReport.resultId === matchingSavedReportId;
+  const reportButtonLabel = reportRunning
+    ? "Creating…"
+    : matchingSavedReportId
+      ? currentSavedReportLoaded
+        ? "Loaded"
+        : "Load saved report"
+      : "Create report";
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -92,84 +151,52 @@ export function Chat({
 
   return (
     <div className="flex flex-col h-full min-h-0" style={{ background: "var(--bg-base)" }}>
-      {/* Header — provider switcher rendered as flat text with active underline,
-          matching the dashboard reference's restrained chrome. */}
-      <div
-        className="px-5 pt-5 pb-3 flex items-center justify-between gap-3"
-        style={{ background: "var(--bg-base)" }}
-      >
-        <span style={{ color: "var(--text-3)" }} className="text-[11px] uppercase tracking-wider">
-          AI model
-        </span>
-        <div className="flex gap-4 shrink-0">
-          {(["claude", "gpt5", "gemini"] as Provider[]).map((p) => {
-            const active = provider === p;
-            return (
-              <button
-                key={p}
-                onClick={() => setProvider(p)}
-                className="flex items-center gap-1.5 text-[12.5px] transition-colors whitespace-nowrap pb-1"
-                style={{
-                  color: active ? "var(--text-1)" : "var(--text-3)",
-                  borderBottom: active
-                    ? `1px solid var(--text-1)`
-                    : "1px solid transparent",
-                }}
-                title={`Use ${PROVIDER_LABEL[p]}`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${PROVIDER_DOT[p]}`} />
-                {PROVIDER_LABEL[p]}
-              </button>
-            );
-          })}
-        </div>
+      {/* Header — compact model selector. */}
+      <div className="px-5 pt-5 pb-3 flex items-center justify-between gap-3">
+        <span className="ui-label">AI model</span>
+        <select
+          value={provider}
+          onChange={(e) => setProvider(e.target.value as Provider)}
+          className="ui-control ui-control-select shrink-0 min-w-[96px]"
+          title="AI model"
+        >
+          {(["claude", "gpt5", "gemini"] as Provider[]).map((p) => (
+            <option key={p} value={p}>
+              {PROVIDER_LABEL[p]}
+            </option>
+          ))}
+        </select>
       </div>
 
-      {/* Disclaimer — quieter, single line, no fill */}
-      <div
-        className="px-5 py-2 text-[11.5px] flex items-start gap-2"
-        style={{ color: "var(--text-3)", borderTop: "1px solid var(--stroke)" }}
-      >
-        <span style={{ color: "var(--warn)" }}>▲</span>
-        <span>
-          Not medical advice. A tool to prepare questions for the oncology team — not a diagnosis.
-        </span>
-      </div>
-
-      {/* Scan CTA — cream highlight card with outlined pill action.
-          Matches the reference dashboard's primary call-to-action pattern. */}
+      {/* Durable scan/report actions: save Markdown notes that future chat turns can reuse. */}
       {onScan && (
         <div className="px-5 py-3">
-          <div
-            className="rounded-2xl px-5 py-4"
-            style={{ background: "var(--highlight)", color: "var(--highlight-ink)" }}
-          >
+          <div className="ui-card-cream px-5 py-4 space-y-3">
             <div className="flex items-start justify-between gap-3 mb-1">
-              <h3 className="text-[15px] font-medium leading-tight">
-                {scanPhase === "idle" || scanPhase === "done"
-                  ? "Look for cancer signs"
-                  : PHASE_COPY[scanPhase].label}
-              </h3>
+              <div className="min-w-0">
+                <h3 className="ui-title">
+                  {scanPhase === "idle" || scanPhase === "done"
+                    ? "Scan selected view"
+                    : PHASE_COPY[scanPhase].label}
+                </h3>
+                {(scanPhase === "idle" || scanPhase === "done") && (
+                  <div className="ui-caption mt-1">
+                    {scanReport
+                      ? `Saved note for ${scanTargetLabel}`
+                      : `Currently scanning: ${scanTargetLabel}`}
+                  </div>
+                )}
+              </div>
               <button
                 onClick={onScan}
                 disabled={busy}
-                className="shrink-0 inline-flex items-center gap-1 text-[12px] px-3 py-1 rounded-full transition-colors disabled:opacity-50"
-                style={{
-                  border: `1px solid rgba(20, 23, 26, 0.4)`,
-                  color: "var(--highlight-ink)",
-                  background: busy ? "rgba(20, 23, 26, 0.06)" : "transparent",
-                }}
+                className="ui-control ui-control-on-cream shrink-0"
               >
-                {busy ? "Scanning…" : scanPhase === "done" ? "Run again" : "Run scan"}
+                {scanRunning ? "Scanning…" : scanPhase === "done" ? "Scan again" : "Scan selected view"}
               </button>
             </div>
-            <p className="text-[12.5px]" style={{ color: "var(--highlight-mute)" }}>
-              {scanPhase === "idle" || scanPhase === "done"
-                ? `Three-pass deep scan with ${PROVIDER_LABEL[provider]}. Surveys the whole series, zooms into regions of interest, examines every image in the top areas.`
-                : PHASE_COPY[scanPhase].sub}
-            </p>
             {scanPhase !== "idle" && scanPhase !== "done" && (
-              <div className="flex items-center gap-1 mt-3">
+              <div className="flex items-center gap-1">
                 {(["survey", "zoom", "deep"] as const).map((p) => {
                   const active = scanPhase === p;
                   const past =
@@ -178,7 +205,7 @@ export function Chat({
                   return (
                     <div
                       key={p}
-                      className="h-0.5 flex-1 rounded-full transition-colors"
+                      className="h-0.5 flex-1 rounded-full"
                       style={{
                         background: active
                           ? "var(--highlight-ink)"
@@ -191,6 +218,110 @@ export function Chat({
                 })}
               </div>
             )}
+            {scanPhase === "done" && scanReport && (
+              <div
+                className="ui-caption pt-3"
+                style={{ borderTop: "1px solid rgba(20, 23, 26, 0.16)" }}
+                title={scanReport.latestPath}
+              >
+                Markdown saved. Future questions about this scan use the latest note automatically.
+              </div>
+            )}
+            {onCreateReport && (
+              <div className="pt-3 space-y-3" style={{ borderTop: "1px solid rgba(20, 23, 26, 0.16)" }}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="ui-title">Timeline report</h3>
+                    <div className="ui-caption mt-1">
+                      {selectedDateCount >= 2
+                        ? `${selectedDateCount} selected dates · ${scanTargetLabel}`
+                        : `Select at least two dates for ${scanTargetLabel}`}
+                    </div>
+                  </div>
+                  <button
+                    onClick={onCreateReport}
+                    disabled={busy || createReportDisabled || currentSavedReportLoaded}
+                    className="ui-control ui-control-on-cream shrink-0"
+                  >
+                    {reportButtonLabel}
+                  </button>
+                </div>
+                {reportJob && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between ui-caption">
+                      <span>{reportJob.progress.detail ?? "Creating timeline report"}</span>
+                      <span>{reportPercent.toFixed(0)}%</span>
+                    </div>
+                    <div className="ui-progress-track" style={{ background: "rgba(20, 23, 26, 0.2)" }}>
+                      <div
+                        className="ui-progress-bar"
+                        style={{ width: `${reportPercent}%`, background: "var(--highlight-ink)" }}
+                      />
+                    </div>
+                  </div>
+                )}
+                {timelineReport?.latestPath && (
+                  <div className="ui-caption" title={timelineReport.latestPath}>
+                    Timeline Markdown saved. Future questions about this scan type use the latest report automatically.
+                  </div>
+                )}
+                {reportHistory.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="ui-label">Saved report history</div>
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                      {reportHistory.map((item) => {
+                        const loaded = timelineReport?.resultId === item.resultId;
+                        const exact = matchingSavedReportId === item.resultId;
+                        return (
+                          <div
+                            key={item.resultId}
+                            className="flex items-stretch gap-1.5"
+                            title={item.reportPath ?? item.latestPath}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => onLoadReport?.(item.resultId)}
+                              disabled={busy || loaded}
+                              className="ui-control flex-1 min-w-0 justify-between text-left disabled:opacity-60"
+                            >
+                              <span className="min-w-0">
+                                <span className="block truncate">
+                                  {reportDateLabel(item.createdAt)}
+                                  {exact ? " · current dates" : ""}
+                                </span>
+                                <span className="block truncate ui-caption">
+                                  {reportStudyLabel(item) || `${item.groupCount} visible-change groups`}
+                                </span>
+                              </span>
+                              <span className="shrink-0">{loaded ? "loaded" : "load"}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onExportReport?.(item.resultId)}
+                              disabled={busy}
+                              className="ui-control shrink-0"
+                              title="Download saved Markdown report"
+                            >
+                              export
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onDeleteReport?.(item.resultId)}
+                              disabled={busy}
+                              className="ui-control shrink-0"
+                              title="Delete saved report"
+                              style={{ color: "rgb(252,165,165)" }}
+                            >
+                              delete
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -198,32 +329,22 @@ export function Chat({
       {/* Conversation — flex-1 + min-h-0 so overflow-y-auto actually scrolls inside the flex column */}
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-5 pb-3 space-y-5">
         {history.length === 0 && (
-          <div className="text-[13px] py-2" style={{ color: "var(--text-3)" }}>
-            <p style={{ color: "var(--text-2)" }} className="mb-2">Two ways to start:</p>
-            <ol className="space-y-1.5 ml-4 list-decimal">
-              <li>
-                Tap <span style={{ color: "var(--accent)" }}>Look for cancer signs across all images</span>{" "}
-                — the AI does a 3-pass deep scan: surveys the whole series, zooms into regions of
-                interest, then examines every image in the top areas. Each finding lists what it could
-                mean, how a healthy scan compares, and questions to ask the oncologist.
-              </li>
-              <li>
-                Or scroll to a specific image, draw a circle around something you're curious about, and
-                ask <span style={{ color: "var(--text-2)" }}>"what is this?"</span>
-              </li>
-            </ol>
-            <p className="mt-3 text-[11.5px]" style={{ color: "var(--text-4)" }}>
-              The 3-pass scan takes 1–2 minutes and uses your AI API quota.
-            </p>
+          <div className="ui-caption py-2">
+            No conversation yet.
           </div>
         )}
         {history.map((turn, i) => (
-          <ChatBubble key={i} turn={turn} onJumpToSlice={onJumpToSlice} />
+          <ChatBubble
+            key={i}
+            turn={turn}
+            onJumpToSlice={onJumpToSlice}
+            onJumpToEvidence={onJumpToEvidence}
+          />
         ))}
         {busy && (
-          <div className="flex items-center gap-2 text-[12px]" style={{ color: PROVIDER_TEXT[provider] === undefined ? "var(--text-3)" : "" }}>
-            <span className={`w-2 h-2 rounded-full animate-pulse ${PROVIDER_DOT[provider]}`} />
-            <span className={PROVIDER_TEXT[provider]}>{PROVIDER_LABEL[provider]} is looking…</span>
+          <div className="flex items-center gap-2 ui-caption">
+            <span className="w-2 h-2 rounded-full animate-pulse" style={{ background: PROVIDER_DOT_COLOR[provider] }} />
+            <span style={{ color: PROVIDER_TEXT_COLOR[provider] }}>{PROVIDER_LABEL[provider]} is looking…</span>
           </div>
         )}
       </div>
@@ -242,18 +363,12 @@ export function Chat({
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask about this image…"
             disabled={busy}
-            className="flex-1 rounded-full px-4 py-2.5 text-[13.5px] focus:outline-none disabled:opacity-50"
-            style={{ background: "var(--bg-2)", color: "var(--text-1)" }}
+            className="ui-field flex-1 min-w-0 disabled:opacity-50"
           />
           <button
             type="submit"
             disabled={busy || askDisabled || !input.trim()}
-            className="rounded-full px-4 py-2 text-[12.5px] transition-colors disabled:cursor-not-allowed shrink-0"
-            style={{
-              border: `1px solid ${busy || askDisabled || !input.trim() ? "var(--text-4)" : "var(--text-2)"}`,
-              color: busy || askDisabled || !input.trim() ? "var(--text-4)" : "var(--text-1)",
-              background: "transparent",
-            }}
+            className="ui-control shrink-0"
             title={askDisabled ? "Image still loading…" : undefined}
           >
             Ask
@@ -264,17 +379,22 @@ export function Chat({
   );
 }
 
-function ChatBubble({ turn, onJumpToSlice }: { turn: ChatTurn; onJumpToSlice?: (i: number) => void }) {
+function ChatBubble({
+  turn,
+  onJumpToSlice,
+  onJumpToEvidence,
+}: {
+  turn: ChatTurn;
+  onJumpToSlice?: (i: number) => void;
+  onJumpToEvidence?: (seriesKey: string, sliceIndex: number) => void;
+}) {
   if (turn.role === "user") {
     return (
       <div className="flex justify-end">
-        <div
-          className="max-w-[85%] rounded-2xl px-3.5 py-2 text-[14px] whitespace-pre-wrap"
-          style={{ background: "var(--bg-3)", color: "var(--text-1)" }}
-        >
+        <div className="ui-chat-bubble">
           {turn.content}
           {typeof turn.sliceIndex === "number" && (
-            <div className="text-[11px] mt-1" style={{ color: "var(--text-4)" }}>image {turn.sliceIndex + 1}</div>
+            <div className="ui-caption mt-1">image {turn.sliceIndex + 1}</div>
           )}
         </div>
       </div>
@@ -287,9 +407,12 @@ function ChatBubble({ turn, onJumpToSlice }: { turn: ChatTurn; onJumpToSlice?: (
   };
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-2 text-[12px]">
-        <span className={`w-1.5 h-1.5 rounded-full ${turn.provider ? PROVIDER_DOT[turn.provider] : "bg-neutral-500"}`} />
-        <span className={turn.provider ? PROVIDER_TEXT[turn.provider] : "text-neutral-400"}>
+      <div className="flex items-center gap-2 ui-caption">
+        <span
+          className="w-1.5 h-1.5 rounded-full"
+          style={{ background: turn.provider ? PROVIDER_DOT_COLOR[turn.provider] : "var(--text-4)" }}
+        />
+        <span style={{ color: turn.provider ? PROVIDER_TEXT_COLOR[turn.provider] : "var(--text-3)" }}>
           {turn.provider ? PROVIDER_LABEL[turn.provider] : "ai"}
         </span>
         {turn.scanPhase && (
@@ -306,7 +429,7 @@ function ChatBubble({ turn, onJumpToSlice }: { turn: ChatTurn; onJumpToSlice?: (
           </span>
         )}
       </div>
-      <div className="text-[14px] whitespace-pre-wrap leading-relaxed" style={{ color: "var(--text-1)" }}>
+      <div className="ui-body whitespace-pre-wrap leading-relaxed" style={{ color: "var(--text-1)" }}>
         {turn.content}
       </div>
 
@@ -322,6 +445,18 @@ function ChatBubble({ turn, onJumpToSlice }: { turn: ChatTurn; onJumpToSlice?: (
         </div>
       )}
 
+      {turn.progressionCompare && turn.progressionCompare.groups.length > 0 && (
+        <div className="space-y-2 pt-1">
+          {turn.progressionCompare.groups.map((group) => (
+            <ComparisonGroupCard
+              key={group.groupId}
+              group={group}
+              onJumpToEvidence={onJumpToEvidence}
+            />
+          ))}
+        </div>
+      )}
+
       {/* Legacy single-pass scan compatibility — chips only. */}
       {turn.scan && turn.scan.flagged.length > 0 && (
         <div className="flex flex-wrap gap-1.5 pt-1">
@@ -332,7 +467,7 @@ function ChatBubble({ turn, onJumpToSlice }: { turn: ChatTurn; onJumpToSlice?: (
               <button
                 key={`${f.sliceIndex}-${i}`}
                 onClick={() => onJumpToSlice?.(f.sliceIndex)}
-                className="group text-[12px] px-2.5 py-1 rounded-full transition-colors flex items-center gap-1.5"
+                className="ui-control group"
                 style={{ background: "var(--warn-soft)", color: "var(--warn)" }}
                 title={`Jump to image ${f.sliceIndex + 1} · ${(f.confidence * 100).toFixed(0)}% confidence`}
               >
@@ -346,12 +481,120 @@ function ChatBubble({ turn, onJumpToSlice }: { turn: ChatTurn; onJumpToSlice?: (
       )}
 
       {!turn.scan && !turn.scanPhase && turn.annotations && turn.annotations.length > 0 && (
-        <div className="text-[11px]" style={{ color: "var(--text-4)" }}>
+        <div className="ui-caption">
           marked {turn.annotations.length} spot{turn.annotations.length > 1 ? "s" : ""} on image{" "}
           {(turn.annotations[0].sliceIndex ?? 0) + 1}
         </div>
       )}
     </div>
+  );
+}
+
+const COMPARE_STATUS_LABEL: Record<ComparisonFindingStatus, string> = {
+  seen_across_dates: "flagged across scans",
+  later_date_only: "latest scan only",
+  earlier_date_only: "not matched on latest",
+  changed_appearance_or_extent: "changed across scans",
+  uncertain_match: "uncertain match",
+};
+
+const COMPARE_STATUS_COLOR: Record<ComparisonFindingStatus, string> = {
+  seen_across_dates: "var(--physiologic)",
+  later_date_only: "var(--notable)",
+  earlier_date_only: "var(--worth)",
+  changed_appearance_or_extent: "var(--worth)",
+  uncertain_match: "var(--text-3)",
+};
+
+function ComparisonGroupCard({
+  group,
+  onJumpToEvidence,
+}: {
+  group: NonNullable<ChatTurn["progressionCompare"]>["groups"][number];
+  onJumpToEvidence?: (seriesKey: string, sliceIndex: number) => void;
+}) {
+  const [expanded, setExpanded] = useState(
+    group.status === "later_date_only" || group.status === "changed_appearance_or_extent",
+  );
+  return (
+    <div className="ui-surface overflow-hidden">
+      <div className="flex items-stretch">
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="flex items-start gap-3 px-4 py-4 flex-1 text-left min-w-0"
+        >
+          <span
+            className="w-1.5 h-1.5 rounded-full shrink-0 mt-1.5"
+            style={{ background: COMPARE_STATUS_COLOR[group.status] }}
+          />
+          <div className="min-w-0 flex-1">
+            <div className="ui-label mb-1">{COMPARE_STATUS_LABEL[group.status]}</div>
+            <h3 className="ui-title truncate">{group.title}</h3>
+            {!expanded && (
+              <p className="ui-body truncate mt-1">{group.visibleChangeSummary}</p>
+            )}
+          </div>
+          <div className="ui-caption shrink-0">
+            {group.evidence.length} date{group.evidence.length === 1 ? "" : "s"}
+          </div>
+        </button>
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="px-3.5 ui-caption"
+          style={{ color: "var(--text-3)", borderLeft: "1px solid var(--stroke)" }}
+          title={expanded ? "Collapse" : "Expand"}
+        >
+          {expanded ? "▾" : "▸"}
+        </button>
+      </div>
+      {expanded && (
+        <div className="px-4 pb-4 space-y-3.5 ui-body">
+          <Section label="Plain-English meaning">
+            <p style={{ color: "var(--text-1)" }}>{group.visibleChangeSummary}</p>
+          </Section>
+          <Section label="Scan dates and images">
+            <div className="flex flex-wrap gap-1.5">
+              {group.evidence.map((e) => (
+                <EvidencePill
+                  key={`${e.seriesKey}-${e.sliceIndex}-${e.region}`}
+                  evidence={e}
+                  onJumpToEvidence={onJumpToEvidence}
+                />
+              ))}
+            </div>
+          </Section>
+          <Section label="Ask the oncologist">
+            <ul className="space-y-1 list-disc ml-4" style={{ color: "var(--text-1)" }}>
+              {group.oncologistQuestions.map((q, i) => (
+                <li key={i}>{q}</li>
+              ))}
+            </ul>
+          </Section>
+          <div className="ui-caption">
+            {(group.confidence * 100).toFixed(0)}% average AI confidence · visual review only
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EvidencePill({
+  evidence,
+  onJumpToEvidence,
+}: {
+  evidence: ComparisonEvidence;
+  onJumpToEvidence?: (seriesKey: string, sliceIndex: number) => void;
+}) {
+  return (
+    <button
+      onClick={() => onJumpToEvidence?.(evidence.seriesKey, evidence.sliceIndex)}
+      className="ui-control"
+      title={`${evidence.studyLabel} · image ${evidence.sliceIndex + 1}`}
+    >
+      <span className="truncate max-w-[120px]">{evidence.studyDate || evidence.studyLabel}</span>
+      <span className="font-mono opacity-80">#{evidence.sliceIndex + 1}</span>
+    </button>
   );
 }
 
@@ -365,24 +608,26 @@ function FindingCard({
   const [expanded, setExpanded] = useState(finding.severity === "notable");
   return (
     <div
-      className="rounded-2xl overflow-hidden"
-      style={{ background: "var(--bg-1)" }}
+      className="ui-surface overflow-hidden"
     >
       {/* Header — large display image-number on the right, like the reference dashboard cards */}
       <div className="flex items-stretch">
         <button
           onClick={() => onJumpToSlice?.(finding.sliceIndex)}
-          className="flex items-baseline gap-3 px-4 pt-4 pb-3 flex-1 text-left hover:bg-white/[0.02] transition-colors min-w-0"
+          className="flex items-baseline gap-3 px-4 pt-4 pb-3 flex-1 text-left min-w-0"
           title={`Jump to image ${finding.sliceIndex + 1}`}
         >
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-1">
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${SEVERITY_DOT[finding.severity]}`} />
-              <span className="text-[10.5px] uppercase tracking-wider" style={{ color: "var(--text-4)" }}>
+              <span
+                className="w-1.5 h-1.5 rounded-full shrink-0"
+                style={{ background: SEVERITY_DOT_COLOR[finding.severity] }}
+              />
+              <span className="ui-label">
                 {SEVERITY_LABEL[finding.severity]}
               </span>
             </div>
-            <h3 className="text-[14px] font-medium truncate" style={{ color: "var(--text-1)" }}>
+            <h3 className="ui-title truncate">
               {finding.region}
             </h3>
           </div>
@@ -395,7 +640,7 @@ function FindingCard({
         </button>
         <button
           onClick={() => setExpanded((v) => !v)}
-          className="px-3.5 hover:bg-white/[0.02] transition-colors text-[12px]"
+          className="px-3.5 ui-caption"
           style={{ color: "var(--text-3)", borderLeft: "1px solid var(--stroke)" }}
           title={expanded ? "Collapse" : "Expand"}
         >
@@ -406,15 +651,14 @@ function FindingCard({
       {/* Collapsed: 1-line observation summary */}
       {!expanded && (
         <div
-          className="px-4 pb-4 text-[12.5px] leading-snug truncate"
-          style={{ color: "var(--text-2)" }}
+          className="px-4 pb-4 ui-body truncate"
         >
           {finding.observation}
         </div>
       )}
 
       {expanded && (
-        <div className="px-4 pb-4 space-y-3.5 text-[12.5px]" style={{ color: "var(--text-2)" }}>
+        <div className="px-4 pb-4 space-y-3.5 ui-body">
           <Section label="What I see">
             <p style={{ color: "var(--text-1)" }}>{finding.observation}</p>
           </Section>
@@ -435,12 +679,11 @@ function FindingCard({
               ))}
             </ul>
           </Section>
-          <div className="flex items-center justify-between text-[11px] pt-1" style={{ color: "var(--text-4)" }}>
+          <div className="flex items-center justify-between ui-caption pt-1">
             <span>{(finding.confidence * 100).toFixed(0)}% confidence</span>
             <button
               onClick={() => onJumpToSlice?.(finding.sliceIndex)}
-              className="hover:underline"
-              style={{ color: "var(--text-2)" }}
+              className="ui-inline-action"
             >
               jump to image {finding.sliceIndex + 1} →
             </button>
@@ -454,7 +697,7 @@ function FindingCard({
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-[0.08em] mb-1.5" style={{ color: "var(--text-4)" }}>
+      <div className="ui-label mb-1.5">
         {label}
       </div>
       <div>{children}</div>

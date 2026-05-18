@@ -133,8 +133,12 @@ export async function loadSlicesFromDisk(
   dataDir: string,
   seriesId: string,
   indices: number[],
+  studyId?: string,
 ): Promise<{ index: number; b64: string }[]> {
-  const seriesDir = path.join(dataDir, seriesId);
+  const seriesDir =
+    studyId && studyId !== "_legacy"
+      ? path.join(dataDir, "studies", studyId, seriesId)
+      : path.join(dataDir, seriesId);
   const out: { index: number; b64: string }[] = [];
   for (const idx of indices) {
     const fname = `slice_${String(idx).padStart(4, "0")}.png`;
@@ -229,7 +233,7 @@ async function callProvider({
       text: `Respond as a single JSON object matching the exact shape shown in the system prompt. No prose outside the JSON, no markdown fences.`,
     });
     const resp = await client.chat.completions.create({
-      model: "gpt-5",
+      model: "gpt-5.5",
       max_completion_tokens: maxTokens,
       messages: [
         { role: "system", content: systemPrompt },
@@ -316,6 +320,7 @@ export type SurveyResult = {
 
 export type ScanInputBase = {
   provider: Provider;
+  studyId?: string;
   seriesId: string;
   seriesDescription: string;
   modality: string;
@@ -325,7 +330,7 @@ export type ScanInputBase = {
 
 export async function runSurvey(input: ScanInputBase): Promise<SurveyResult> {
   const indices = sampleIndices(input.totalSlices, 16);
-  const slices = await loadSlicesFromDisk(input.dataDir, input.seriesId, indices);
+  const slices = await loadSlicesFromDisk(input.dataDir, input.seriesId, indices, input.studyId);
   const preamble = untrustedPreamble(
     input.seriesDescription,
     input.modality,
@@ -390,7 +395,7 @@ export async function runZoom(
   const indices = [...indexSet].sort((a, b) => a - b);
   if (indices.length === 0) return { text: "No regions to zoom into.", findings: [], inspectedIndices: [] };
 
-  const slices = await loadSlicesFromDisk(input.dataDir, input.seriesId, indices);
+  const slices = await loadSlicesFromDisk(input.dataDir, input.seriesId, indices, input.studyId);
   const roiSummary = rois
     .map((r) => `- ${r.region} (center=${r.centerSlice}, span=${r.spanStart}..${r.spanEnd}, priority=${r.priority}): ${r.why}`)
     .join("\n");
@@ -459,7 +464,7 @@ export async function runDeep(
   const indices = [...indexSet].sort((a, b) => a - b);
   if (indices.length === 0) return { text: "No regions to deep-dive.", findings: [], inspectedIndices: [] };
 
-  const slices = await loadSlicesFromDisk(input.dataDir, input.seriesId, indices);
+  const slices = await loadSlicesFromDisk(input.dataDir, input.seriesId, indices, input.studyId);
   const regionSummary = regions
     .map((r) => `- ${r.region} (slice span ${r.spanStart}..${r.spanEnd})`)
     .join("\n");
